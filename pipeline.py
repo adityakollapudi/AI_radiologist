@@ -50,11 +50,6 @@ import numpy as np
 # ================================================================
 
 import matplotlib
-
-# Use a non-interactive backend for saving.
-# Windows image viewer will be used to POP the final image.
-matplotlib.use("Agg")
-
 import matplotlib.pyplot as plt
 
 # ================================================================
@@ -242,69 +237,18 @@ def open_result_image(
     ).resolve()
 
     if not image_path.exists():
-
         print(
             "[viewer] Result image does not exist:"
         )
-
         print(
             image_path
         )
-
         return
 
-    try:
-
-        if sys.platform.startswith("win"):
-
-            # Windows
-            os.startfile(
-                str(image_path)
-            )
-
-        elif sys.platform == "darwin":
-
-            subprocess.Popen(
-                [
-                    "open",
-                    str(image_path)
-                ]
-            )
-
-        else:
-
-            subprocess.Popen(
-                [
-                    "xdg-open",
-                    str(image_path)
-                ]
-            )
-
-        print()
-        print(
-            "[viewer] Result image opened."
-        )
-
-    except Exception as e:
-
-        print()
-        print(
-            "[viewer] Could not automatically "
-            "open the result image."
-        )
-
-        print(
-            f"Reason: {e}"
-        )
-
-        print()
-        print(
-            "Open this file manually:"
-        )
-
-        print(
-            image_path
-        )
+    print()
+    print(
+        f"[viewer] Result image saved at: {image_path}"
+    )
 
 
 # ================================================================
@@ -1092,12 +1036,18 @@ def generate_gradcam(
     cam_engine = None
 
     try:
+        target_layer = None
+        if hasattr(model, "gradcam_target_layer"):
+            target_layer = model.gradcam_target_layer
+        elif hasattr(model, "backbone") and hasattr(model.backbone, "features"):
+            target_layer = model.backbone.features[-1]
+        elif hasattr(model, "features"):
+            target_layer = model.features[-1]
 
-        cam_engine = (
-            GradCAMClass(
-                model
-            )
-        )
+        try:
+            cam_engine = GradCAMClass(model, target_layer)
+        except TypeError:
+            cam_engine = GradCAMClass(model)
 
         # --------------------------------------------------------
         # Context manager support
@@ -1317,7 +1267,7 @@ def create_result_figure(
     fig, axes = plt.subplots(
         1,
         2,
-        figsize=(17, 10)
+        figsize=(16, 9)
     )
 
     # ============================================================
@@ -1332,9 +1282,10 @@ def create_result_figure(
     )
 
     axes[0].set_title(
-        "ORIGINAL X-RAY",
-        fontsize=20,
-        fontweight="bold"
+        "1. ORIGINAL INPUT X-RAY",
+        fontsize=15,
+        fontweight="bold",
+        pad=12
     )
 
     axes[0].axis(
@@ -1361,9 +1312,10 @@ def create_result_figure(
     )
 
     axes[1].set_title(
-        "GRAD-CAM",
-        fontsize=20,
-        fontweight="bold"
+        "2. GRAD-CAM ATTENTION OVERLAY",
+        fontsize=15,
+        fontweight="bold",
+        pad=12
     )
 
     axes[1].axis(
@@ -1391,140 +1343,72 @@ def create_result_figure(
     # ============================================================
 
     if branch == "CHEST":
-
-        image_type = (
-            "CHEST X-RAY"
-        )
-
+        image_type = "CHEST X-RAY"
     else:
+        image_type = "MUSCULOSKELETAL X-RAY"
 
-        image_type = (
-            "MUSCULOSKELETAL X-RAY"
-        )
+    prediction_name = prediction["prediction"]
+    confidence = prediction["confidence"]
 
-    prediction_name = (
-        prediction["prediction"]
-    )
-
-    confidence = (
-        prediction["confidence"]
+    pred_color = (
+        "#c0392b"
+        if str(prediction_name).upper() in ["PNEUMONIA", "ABNORMAL"]
+        else "#27ae60"
     )
 
     # ------------------------------------------------------------
-    # Main title
+    # Header 1: Super Title
     # ------------------------------------------------------------
-
     fig.suptitle(
-        "AI RADIOLOGIST",
-        fontsize=27,
+        "AI RADIOLOGIST - DIAGNOSTIC REPORT",
+        fontsize=22,
         fontweight="bold",
-        y=0.985
+        y=0.96
     )
 
     # ------------------------------------------------------------
-    # Image type
+    # Header 2: Primary Classification Status & Confidence
     # ------------------------------------------------------------
-
-    fig.text(
-        0.5,
-        0.945,
-        f"IMAGE TYPE : {image_type}",
-        ha="center",
-        fontsize=17,
-        fontweight="bold"
-    )
-
-    # ------------------------------------------------------------
-    # Prediction
-    # ------------------------------------------------------------
-
     fig.text(
         0.5,
         0.910,
-        f"PREDICTION : {prediction_name}",
+        f"IMAGE TYPE : {image_type}    |    PREDICTION : {prediction_name}    |    CONFIDENCE : {confidence:.2f}%",
         ha="center",
-        fontsize=19,
-        fontweight="bold"
+        fontsize=15,
+        fontweight="bold",
+        color=pred_color
     )
 
     # ------------------------------------------------------------
-    # Confidence
+    # Header 3: Router, Class Probabilities & Threshold Details
     # ------------------------------------------------------------
-
-    fig.text(
-        0.5,
-        0.878,
-        f"CONFIDENCE : {confidence:.2f}%",
-        ha="center",
-        fontsize=15
-    )
-
-    # ------------------------------------------------------------
-    # Probabilities
-    # ------------------------------------------------------------
-
-    probability_text = (
-        f"{prediction['negative_class']} : "
-        f"{prediction['negative_probability']:.2f}%"
-        "          |          "
-        f"{prediction['positive_class']} : "
-        f"{prediction['positive_probability']:.2f}%"
+    probability_detail = (
+        f"Router : {branch} ({router_result['confidence']:.2f}%)    |    "
+        f"Probabilities : {prediction['negative_class']}: {prediction['negative_probability']:.2f}%  •  "
+        f"{prediction['positive_class']}: {prediction['positive_probability']:.2f}%    |    "
+        f"Threshold : {prediction['threshold']:.4f}"
     )
 
     fig.text(
         0.5,
-        0.845,
-        probability_text,
+        0.865,
+        probability_detail,
         ha="center",
         fontsize=12,
-        family="monospace"
+        color="#333333"
     )
 
     # ------------------------------------------------------------
-    # Router
+    # Footer: Model Info & Disclaimer
     # ------------------------------------------------------------
-
     fig.text(
         0.5,
-        0.815,
-        (
-            f"ROUTER : {branch} "
-            f"({router_result['confidence']:.2f}%)"
-        ),
+        0.025,
+        f"Model : EfficientNet-B3    |    Branch : {branch} Specialist    |    Grad-CAM highlights image regions influencing model prediction.",
         ha="center",
-        fontsize=12
-    )
-
-    # ------------------------------------------------------------
-    # Model
-    # ------------------------------------------------------------
-
-    fig.text(
-        0.5,
-        0.055,
-        (
-            "Model : EfficientNet-B3"
-            "        |        "
-            f"Branch : {branch}"
-        ),
-        ha="center",
-        fontsize=11
-    )
-
-    # ------------------------------------------------------------
-    # Grad-CAM explanation
-    # ------------------------------------------------------------
-
-    fig.text(
-        0.5,
-        0.028,
-        (
-            "Grad-CAM highlights image regions "
-            "that influenced the model prediction."
-        ),
-        ha="center",
-        fontsize=9,
-        style="italic"
+        fontsize=10,
+        style="italic",
+        color="#555555"
     )
 
     # ============================================================
@@ -1532,11 +1416,11 @@ def create_result_figure(
     # ============================================================
 
     plt.subplots_adjust(
-        left=0.03,
+        left=0.04,
         right=0.96,
-        top=0.79,
-        bottom=0.09,
-        wspace=0.04
+        top=0.81,
+        bottom=0.07,
+        wspace=0.08
     )
 
     # ============================================================
@@ -1550,20 +1434,22 @@ def create_result_figure(
         .resolve()
     )
 
-    output_path.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    fig.savefig(
-        output_path,
-        dpi=200,
-        bbox_inches="tight"
-    )
-
-    plt.close(
-        fig
-    )
+    output_str = str(output_path)
+    try:
+        fig.savefig(
+            output_str,
+            dpi=200,
+            bbox_inches="tight"
+        )
+    except Exception:
+        import time
+        alt_path = output_path.parent / f"{output_path.stem}_{int(time.time())}.png"
+        fig.savefig(
+            str(alt_path),
+            dpi=200,
+            bbox_inches="tight"
+        )
+        output_path = alt_path
 
     print()
     print(
@@ -1573,6 +1459,20 @@ def create_result_figure(
     print(
         output_path
     )
+
+    # ============================================================
+    # POP-UP INTERACTIVE DISPLAY WINDOW
+    # ============================================================
+    try:
+        if hasattr(fig.canvas, "manager") and fig.canvas.manager is not None:
+            fig.canvas.manager.set_window_title(
+                f"AI Radiologist - {prediction_name} ({confidence:.1f}%)"
+            )
+    except Exception:
+        pass
+
+    plt.show()
+    plt.close(fig)
 
     return output_path
 

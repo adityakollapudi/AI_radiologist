@@ -60,6 +60,7 @@ import os
 import sys
 import json
 import traceback
+from pathlib import Path
 
 import numpy as np
 import matplotlib
@@ -80,7 +81,11 @@ Image.MAX_IMAGE_PIXELS = None
 # CONFIGURATION -- edit MODEL_PATH if your checkpoint lives elsewhere
 # ==============================================================================
 
-MODEL_PATH = r"C:\Users\vemul\Downloads\MINIProject_Aditya\mura_checkpoints\mura_efficientnet_b3_best.pth"
+ROOT_DIR = Path(__file__).resolve().parent
+MODEL_PATH = os.environ.get(
+    "MURA_MODEL_PATH",
+    str(ROOT_DIR / "mura_checkpoints" / "mura_efficientnet_b3_best.pth")
+)
 
 # Optionally hard-code an image path here; otherwise pass it on the command line
 # or type it when prompted.
@@ -391,9 +396,18 @@ def load_and_preprocess(image_path, cfg, transform):
 class GradCAM:
     """Grad-CAM for a single-logit model. Runs in float32 on the selected device."""
 
-    def __init__(self, model, target_layer):
+    def __init__(self, model, target_layer=None):
         self.model = model
-        self.target_layer = target_layer
+        if target_layer is not None:
+            self.target_layer = target_layer
+        elif hasattr(model, "gradcam_target_layer"):
+            self.target_layer = model.gradcam_target_layer
+        elif hasattr(model, "backbone") and hasattr(model.backbone, "features"):
+            self.target_layer = model.backbone.features[-1]
+        elif hasattr(model, "features"):
+            self.target_layer = model.features[-1]
+        else:
+            self.target_layer = model
         self.activations = None
         self.gradients = None
         self.handles = []

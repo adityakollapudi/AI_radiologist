@@ -55,11 +55,11 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 Image.MAX_IMAGE_PIXELS = None
 
 
-# ==============================================================================
-# CONFIGURATION
-# ==============================================================================
-
-MODEL_PATH = r"C:\Users\vemul\Downloads\MINI_Project_Aditya_pneumonia\pneumonia_checkpoints\pneumonia_efficientnet_b3_best.pth"
+ROOT_DIR = Path(__file__).resolve().parent
+MODEL_PATH = os.environ.get(
+    "PNEUMONIA_MODEL_PATH",
+    str(ROOT_DIR / "pneumonia_checkpoints" / "pneumonia_efficientnet_b3_best.pth")
+)
 
 IMAGE_PATH = None          # or hard-code a path; CLI argument overrides this
 OVERLAY_ALPHA = 0.42       # heatmap transparency
