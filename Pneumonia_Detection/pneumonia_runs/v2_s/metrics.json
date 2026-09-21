@@ -1,0 +1,34 @@
+{
+  "model": "EfficientNet-V2-S",
+  "image_size": 384,
+  "batch_size": 12,
+  "gradient_accumulation": 1,
+  "threshold": 0.6549999999999999,
+  "validation": {
+    "accuracy": 0.9669064748201439,
+    "precision": 1.0,
+    "recall": 0.9519832985386222,
+    "specificity": 1.0,
+    "f1": 0.9754010695187165,
+    "roc_auc": 0.9981636124642388,
+    "pr_auc": 0.9992236035265911,
+    "tn": 216,
+    "fp": 0,
+    "fn": 23,
+    "tp": 456
+  },
+  "test": {
+    "accuracy": 0.9255663430420712,
+    "precision": 0.9088729016786571,
+    "recall": 0.979328165374677,
+    "specificity": 0.8354978354978355,
+    "f1": 0.9427860696517413,
+    "roc_auc": 0.9456637247334923,
+    "pr_auc": 0.939992482841369,
+    "tn": 193,
+    "fp": 38,
+    "fn": 8,
+    "tp": 379
+  },
+  "epochs_completed": 10
+}

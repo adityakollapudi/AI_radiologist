@@ -102,6 +102,10 @@ PNEUMONIA_SCRIPT = (
     PNEUMONIA_DIR / "test_pneumonia.py"
 )
 
+PNEUMONIA_ENSEMBLE_SCRIPT = (
+    PNEUMONIA_DIR / "ensemble_pneumonia_pipeline.py"
+)
+
 PNEUMONIA_CHECKPOINT = (
     PNEUMONIA_DIR
     / "pneumonia_checkpoints"
@@ -665,24 +669,47 @@ class SpecialistModel:
         # --------------------------------------------------------
 
         if self.branch == "CHEST":
-
-            self.script = (
-                PNEUMONIA_SCRIPT
-            )
-
-            self.checkpoint = (
-                PNEUMONIA_CHECKPOINT
-            )
-
-            self.module_name = (
-                "pneumonia_runtime"
-            )
+            self.is_ensemble = True
+            if PNEUMONIA_ENSEMBLE_SCRIPT.exists():
+                self.script = PNEUMONIA_ENSEMBLE_SCRIPT
+                self.module_name = "pneumonia_ensemble_runtime"
+                self.module = load_module(
+                    self.module_name,
+                    self.script
+                )
+                self.ensemble = self.module.PneumoniaEnsemble(
+                    base_dir=PNEUMONIA_DIR,
+                    device=DEVICE
+                )
+                first_model = list(self.ensemble.models_info.values())[0]
+                self.model = first_model["model"]
+                self.cfg = {
+                    "threshold": 0.50,
+                    "class_names": {0: "NORMAL", 1: "PNEUMONIA"}
+                }
+            else:
+                self.is_ensemble = False
+                self.script = PNEUMONIA_SCRIPT
+                self.checkpoint = PNEUMONIA_CHECKPOINT
+                self.module_name = "pneumonia_runtime"
+                self.module = load_module(
+                    self.module_name,
+                    self.script
+                )
+                loaded = self.module.load_model(
+                    str(self.checkpoint),
+                    DEVICE
+                )
+                self.model = loaded[0] if isinstance(loaded, tuple) else loaded
+                self.cfg = loaded[1] if isinstance(loaded, tuple) and len(loaded) > 1 else {}
+                self.model.eval()
+                self.transform = self.module.build_transform(self.cfg)
 
         elif (
             self.branch ==
             "MUSCULOSKELETAL"
         ):
-
+            self.is_ensemble = False
             self.script = (
                 MURA_SCRIPT
             )
@@ -695,106 +722,46 @@ class SpecialistModel:
                 "mura_runtime"
             )
 
-        else:
-
-            raise ValueError(
-                f"Unknown branch: "
-                f"{self.branch}"
+            print()
+            print(
+                f"Loading {self.branch} specialist model"
             )
 
-        print()
-        print(
-            f"Loading {self.branch} specialist model"
-        )
-
-        print(
-            f"Script     : {self.script}"
-        )
-
-        print(
-            f"Checkpoint : {self.checkpoint}"
-        )
-
-        if not self.checkpoint.exists():
-
-            raise FileNotFoundError(
-                "\nModel checkpoint not found:\n"
-                f"{self.checkpoint}"
+            print(
+                f"Script     : {self.script}"
             )
 
-        # --------------------------------------------------------
-        # Load branch script
-        # --------------------------------------------------------
-
-        self.module = load_module(
-            self.module_name,
-            self.script
-        )
-
-        # --------------------------------------------------------
-        # Load model
-        # --------------------------------------------------------
-
-        if not hasattr(
-            self.module,
-            "load_model"
-        ):
-
-            raise AttributeError(
-                f"\n{self.script} does not contain "
-                "load_model()."
+            print(
+                f"Checkpoint : {self.checkpoint}"
             )
 
-        loaded = (
-            self.module.load_model(
-                str(
-                    self.checkpoint
-                ),
-                DEVICE
-            )
-        )
+            if not self.checkpoint.exists():
+                raise FileNotFoundError(
+                    "\nModel checkpoint not found:\n"
+                    f"{self.checkpoint}"
+                )
 
-        if not isinstance(
-            loaded,
-            tuple
-        ):
-
-            self.model = loaded
-            self.cfg = {}
-
-        else:
-
-            self.model = loaded[0]
-
-            self.cfg = (
-                loaded[1]
-                if len(loaded) > 1
-                else {}
+            self.module = load_module(
+                self.module_name,
+                self.script
             )
 
-        self.model.eval()
-
-        # --------------------------------------------------------
-        # Build transform
-        # --------------------------------------------------------
-
-        if hasattr(
-            self.module,
-            "build_transform"
-        ):
-
-            self.transform = (
-                self.module
-                .build_transform(
-                    self.cfg
+            loaded = (
+                self.module.load_model(
+                    str(self.checkpoint),
+                    DEVICE
                 )
             )
 
-        else:
+            self.model = loaded[0] if isinstance(loaded, tuple) else loaded
+            self.cfg = loaded[1] if isinstance(loaded, tuple) and len(loaded) > 1 else {}
+            self.model.eval()
+            self.transform = self.module.build_transform(self.cfg)
 
-            raise AttributeError(
-                f"\n{self.script} does not contain "
-                "build_transform()."
+        else:
+            raise ValueError(
+                f"Unknown branch: "
+                f"{self.branch}"
             )
 
     # ============================================================
@@ -805,6 +772,8 @@ class SpecialistModel:
         self,
         image
     ):
+        if self.branch == "CHEST" and getattr(self, "is_ensemble", False):
+            return self.ensemble.predict(image)
 
         rgb = image.convert(
             "RGB"
@@ -819,7 +788,6 @@ class SpecialistModel:
         )
 
         with torch.no_grad():
-
             output = (
                 self.model(
                     x
@@ -844,20 +812,12 @@ class SpecialistModel:
             positive_probability
         )
 
-        # --------------------------------------------------------
-        # Threshold
-        # --------------------------------------------------------
-
         threshold = float(
             self.cfg.get(
                 "threshold",
                 0.5
             )
         )
-
-        # --------------------------------------------------------
-        # Class names
-        # --------------------------------------------------------
 
         raw_classes = (
             self.cfg.get(
@@ -870,32 +830,11 @@ class SpecialistModel:
         )
 
         class_names = {}
+        for key, value in raw_classes.items():
+            class_names[int(key)] = str(value).upper()
 
-        for key, value in (
-            raw_classes.items()
-        ):
-
-            class_names[
-                int(key)
-            ] = str(value).upper()
-
-        negative_class = (
-            class_names.get(
-                0,
-                "NORMAL"
-            )
-        )
-
-        positive_class = (
-            class_names.get(
-                1,
-                "ABNORMAL"
-            )
-        )
-
-        # --------------------------------------------------------
-        # Prediction
-        # --------------------------------------------------------
+        negative_class = class_names.get(0, "NORMAL")
+        positive_class = class_names.get(1, "ABNORMAL")
 
         predicted_index = int(
             positive_probability
@@ -915,6 +854,19 @@ class SpecialistModel:
             else
             negative_probability
         )
+
+        return {
+            "prediction": prediction,
+            "predicted_index": predicted_index,
+            "confidence": confidence_probability * 100.0,
+            "negative_class": negative_class,
+            "positive_class": positive_class,
+            "negative_probability": negative_probability * 100.0,
+            "positive_probability": positive_probability * 100.0,
+            "threshold": threshold,
+            "logit": logit,
+            "input_tensor": x,
+        }
 
         return {
 
@@ -959,6 +911,8 @@ def generate_gradcam(
     prediction,
     original_image
 ):
+    if "cam" in prediction and prediction["cam"] is not None:
+        return prediction["cam"]
 
     module = specialist.module
 
@@ -1357,59 +1311,85 @@ def create_result_figure(
     )
 
     # ------------------------------------------------------------
-    # Header 1: Super Title
+    # Header & Metadata Texts
     # ------------------------------------------------------------
-    fig.suptitle(
-        "AI RADIOLOGIST - DIAGNOSTIC REPORT",
-        fontsize=22,
-        fontweight="bold",
-        y=0.96
-    )
-
-    # ------------------------------------------------------------
-    # Header 2: Primary Classification Status & Confidence
-    # ------------------------------------------------------------
-    fig.text(
-        0.5,
-        0.910,
-        f"IMAGE TYPE : {image_type}    |    PREDICTION : {prediction_name}    |    CONFIDENCE : {confidence:.2f}%",
-        ha="center",
-        fontsize=15,
-        fontweight="bold",
-        color=pred_color
-    )
-
-    # ------------------------------------------------------------
-    # Header 3: Router, Class Probabilities & Threshold Details
-    # ------------------------------------------------------------
-    probability_detail = (
-        f"Router : {branch} ({router_result['confidence']:.2f}%)    |    "
-        f"Probabilities : {prediction['negative_class']}: {prediction['negative_probability']:.2f}%  •  "
-        f"{prediction['positive_class']}: {prediction['positive_probability']:.2f}%    |    "
-        f"Threshold : {prediction['threshold']:.4f}"
-    )
-
-    fig.text(
-        0.5,
-        0.865,
-        probability_detail,
-        ha="center",
-        fontsize=12,
-        color="#333333"
-    )
-
-    # ------------------------------------------------------------
-    # Footer: Model Info & Disclaimer
-    # ------------------------------------------------------------
-    fig.text(
-        0.5,
-        0.025,
-        f"Model : EfficientNet-B3    |    Branch : {branch} Specialist    |    Grad-CAM highlights image regions influencing model prediction.",
-        ha="center",
-        fontsize=10,
-        style="italic",
-        color="#555555"
-    )
+    if prediction.get("models"):
+        fig.suptitle(
+            "AI RADIOLOGIST - MULTI-MODEL ENSEMBLE REPORT",
+            fontsize=21,
+            fontweight="bold",
+            y=0.96
+        )
+        consensus_info = f" ({prediction.get('consensus_ratio', '')} AGREE)" if prediction.get("consensus_ratio") else ""
+        fig.text(
+            0.5,
+            0.910,
+            f"IMAGE TYPE : {image_type}    |    CONSENSUS : {prediction_name}{consensus_info}    |    CONFIDENCE : {confidence:.2f}%",
+            ha="center",
+            fontsize=14,
+            fontweight="bold",
+            color=pred_color
+        )
+        breakdown_str = "    |    ".join([
+            f"{name.replace('EfficientNet-', '')} ({r['resolution']}): {r['prediction']} ({r['pneumonia_probability']:.1f}%)"
+            for name, r in prediction["models"].items()
+        ])
+        fig.text(
+            0.5,
+            0.865,
+            breakdown_str,
+            ha="center",
+            fontsize=11,
+            color="#333333"
+        )
+        fig.text(
+            0.5,
+            0.025,
+            f"Ensemble : {len(prediction['models'])} Connected Models (V2-S, B3, B7) | Grad-CAM Source: {prediction.get('primary_cam_model', 'Ensemble')}",
+            ha="center",
+            fontsize=10,
+            style="italic",
+            color="#555555"
+        )
+    else:
+        fig.suptitle(
+            "AI RADIOLOGIST - DIAGNOSTIC REPORT",
+            fontsize=22,
+            fontweight="bold",
+            y=0.96
+        )
+        fig.text(
+            0.5,
+            0.910,
+            f"IMAGE TYPE : {image_type}    |    PREDICTION : {prediction_name}    |    CONFIDENCE : {confidence:.2f}%",
+            ha="center",
+            fontsize=15,
+            fontweight="bold",
+            color=pred_color
+        )
+        probability_detail = (
+            f"Router : {branch} ({router_result['confidence']:.2f}%)    |    "
+            f"Probabilities : {prediction['negative_class']}: {prediction['negative_probability']:.2f}%  •  "
+            f"{prediction['positive_class']}: {prediction['positive_probability']:.2f}%    |    "
+            f"Threshold : {prediction['threshold']:.4f}"
+        )
+        fig.text(
+            0.5,
+            0.865,
+            probability_detail,
+            ha="center",
+            fontsize=12,
+            color="#333333"
+        )
+        fig.text(
+            0.5,
+            0.025,
+            f"Model : EfficientNet-B3    |    Branch : {branch} Specialist    |    Grad-CAM highlights image regions influencing model prediction.",
+            ha="center",
+            fontsize=10,
+            style="italic",
+            color="#555555"
+        )
 
     # ============================================================
     # LAYOUT
@@ -1774,47 +1754,41 @@ def process_xray(
     )
 
     if branch == "CHEST":
-
         print(
             "IMAGE TYPE : CHEST X-RAY"
         )
-
     else:
-
         print(
             "IMAGE TYPE : MUSCULOSKELETAL X-RAY"
         )
 
-    print(
-        f"PREDICTION : "
-        f"{prediction['prediction']}"
-    )
-
-    print(
-        f"CONFIDENCE : "
-        f"{prediction['confidence']:.2f}%"
-    )
-
-    print()
-
-    print(
-        f"{prediction['negative_class']:<15}"
-        f": "
-        f"{prediction['negative_probability']:.2f}%"
-    )
-
-    print(
-        f"{prediction['positive_class']:<15}"
-        f": "
-        f"{prediction['positive_probability']:.2f}%"
-    )
-
-    print()
-
-    print(
-        f"THRESHOLD  : "
-        f"{prediction['threshold']:.4f}"
-    )
+    if prediction.get("models"):
+        print(f"CONSENSUS  : {prediction['prediction']} ({prediction.get('consensus_ratio', '')} Models Agree)")
+        print(f"CONFIDENCE : {prediction['confidence']:.2f}%")
+        print()
+        print(f"{'Connected Model':<20} | {'Res':<8} | {'Prediction':<10} | {'P(Pneumonia)':<12} | {'Thresh':<6}")
+        print("-" * 76)
+        for name, r in prediction["models"].items():
+            print(f"{name:<20} | {r['resolution']:<8} | {r['prediction']:<10} | {r['pneumonia_probability']:>10.2f}% | {r['threshold']:<6.3f}")
+        print("-" * 76)
+    else:
+        print(
+            f"PREDICTION : {prediction['prediction']}"
+        )
+        print(
+            f"CONFIDENCE : {prediction['confidence']:.2f}%"
+        )
+        print()
+        print(
+            f"{prediction['negative_class']:<15}: {prediction['negative_probability']:.2f}%"
+        )
+        print(
+            f"{prediction['positive_class']:<15}: {prediction['positive_probability']:.2f}%"
+        )
+        print()
+        print(
+            f"THRESHOLD  : {prediction['threshold']:.4f}"
+        )
 
     # ============================================================
     # GRAD-CAM

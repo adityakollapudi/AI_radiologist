@@ -1,762 +1,1229 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-test_pneumonia.py
-=================
-Single-image and batch inference + Grad-CAM for the model trained by
-train_pneumonia.py.
-
-Everything that can be read from the checkpoint IS read from the checkpoint --
-class mapping, input size, normalisation statistics, letterbox flag and decision
-threshold. None of it is re-declared here. That is deliberate: every value
-re-typed in an inference script is a place where training and testing can drift
-apart silently, and the resulting bug produces plausible-looking output rather
-than an error.
-
-Matches train_pneumonia.py exactly:
-  Architecture   : torchvision efficientnet_b3 inside a PneumoniaEfficientNetB3
-                   wrapper -> all checkpoint keys are prefixed "backbone."
-  Head           : Dropout(p) -> Linear(1536, 1)
-  Output         : ONE raw logit. No sigmoid inside the model.
-  Loss (training): BCEWithLogitsLoss  -> activation at inference is sigmoid
-  Class mapping  : 0 = NORMAL, 1 = PNEUMONIA
-  Preprocessing  : convert("L") -> convert("RGB") -> letterbox resize to 300
-                   -> ToTensor -> Normalize(ImageNet mean/std)
-  Grad-CAM layer : backbone.features[-1]  (1536 ch, 10x10 at 300px input)
-
-Usage (Windows):
-    python test_pneumonia.py
-    python test_pneumonia.py "C:\\path\\to\\xray.jpeg"
-    python test_pneumonia.py --folder "C:\\path\\to\\folder"
-    python test_pneumonia.py --evaluate "C:\\path\\to\\chest_xray\\test"
-
-Research/educational use only. Outputs are model predictions, not diagnoses.
-"""
+# ================================================================
+# PNEUMONIA DETECTION - DYNAMIC MODEL MODULE
+# EfficientNet-B3 + Multi-Layer LayerCAM
+#
+# Used by pipeline.py
+#
+# REQUIRED PUBLIC API:
+#   load_model(model_path, device)
+#   build_transform(cfg)
+#   GradCAM
+#
+# Image paths are NOT hardcoded.
+# The main pipeline supplies the image dynamically.
+# ================================================================
 
 import os
-import sys
-import json
-import argparse
-import traceback
-from pathlib import Path
-
-import numpy as np
-import matplotlib
-import matplotlib.pyplot as plt
-from PIL import Image, ImageFile
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision import transforms
-from torchvision.models import efficientnet_b3
 
-ImageFile.LOAD_TRUNCATED_IMAGES = True
-Image.MAX_IMAGE_PIXELS = None
+import numpy as np
 
+from PIL import Image
 
-ROOT_DIR = Path(__file__).resolve().parent
-MODEL_PATH = os.environ.get(
-    "PNEUMONIA_MODEL_PATH",
-    str(ROOT_DIR / "pneumonia_checkpoints" / "pneumonia_efficientnet_b3_best.pth")
-)
-
-IMAGE_PATH = None          # or hard-code a path; CLI argument overrides this
-OVERLAY_ALPHA = 0.42       # heatmap transparency
-HEATMAP_CMAP = "jet"
-VALID_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
-
-# Fallbacks used ONLY if the checkpoint is missing the corresponding key.
-# Each one is reported loudly when it fires.
-FALLBACK_IMAGE_SIZE = 300
-FALLBACK_MEAN = [0.485, 0.456, 0.406]
-FALLBACK_STD = [0.229, 0.224, 0.225]
-FALLBACK_CLASS_NAMES = {0: "NORMAL", 1: "PNEUMONIA"}
+from torchvision import models, transforms
 
 
-# ==============================================================================
-# 1. DEVICE
-# ==============================================================================
+# ================================================================
+# DEFAULT CONFIG
+# ================================================================
 
-def setup_device():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print("=" * 76)
-    print("PNEUMONIA EfficientNet-B3 -- inference + Grad-CAM")
-    print("=" * 76)
-    print("PyTorch        :", torch.__version__)
-    print("CUDA available :", torch.cuda.is_available())
-    if torch.cuda.is_available():
-        print("GPU            :", torch.cuda.get_device_name(0))
-        print("GPU memory     : {:.2f} GB".format(
-            torch.cuda.get_device_properties(0).total_memory / 1024 ** 3))
-    print("Device in use  :", device)
-    return device
+DEFAULT_CFG = {
+    "model_name": "efficientnet_b3",
+    "image_size": 300,
+    "letterbox": True,
+    "mean": [
+        0.485,
+        0.456,
+        0.406
+    ],
+    "std": [
+        0.229,
+        0.224,
+        0.225
+    ],
+    "class_names": {
+        0: "NORMAL",
+        1: "PNEUMONIA"
+    },
+    "threshold": 0.75
+}
 
 
-# ==============================================================================
-# 2. PREPROCESSING -- identical to training
-# ==============================================================================
+# ================================================================
+# LETTERBOX
+# ================================================================
 
 class LetterboxResize:
-    """Pad to square, then resize. Same class as in train_pneumonia.py.
 
-    Must be reproduced exactly. If training used letterbox padding and inference
-    used a plain squashing resize, every image arrives with a different aspect
-    distortion than the model was fitted on -- nothing crashes, accuracy just
-    quietly degrades.
-    """
+    def __init__(
+        self,
+        size
+    ):
+        self.size = int(size)
 
-    def __init__(self, size, fill=0):
-        self.size = size
-        self.fill = fill
+    def __call__(
+        self,
+        img
+    ):
 
-    def __call__(self, img):
-        w, h = img.size
-        side = max(w, h)
-        canvas = Image.new(img.mode, (side, side), self.fill)
-        canvas.paste(img, ((side - w) // 2, (side - h) // 2))
-        return canvas.resize((self.size, self.size), Image.BILINEAR)
+        width, height = img.size
 
-    def __repr__(self):
-        return f"LetterboxResize(size={self.size}, fill={self.fill})"
-
-
-def build_transform(cfg):
-    resize = (LetterboxResize(cfg["image_size"]) if cfg["letterbox"]
-              else transforms.Resize((cfg["image_size"], cfg["image_size"])))
-    return transforms.Compose([
-        resize,
-        transforms.ToTensor(),
-        transforms.Normalize(cfg["mean"], cfg["std"]),
-    ])
-
-
-def load_image(image_path, transform):
-    """Returns (original grayscale PIL, model input tensor, mode, size)."""
-    if not os.path.isfile(image_path):
-        raise FileNotFoundError(f"\nImage not found:\n  {image_path}")
-    try:
-        with Image.open(image_path) as im:
-            mode, size = im.mode, im.size
-            gray = im.convert("L").copy()
-    except Exception as e:
-        raise RuntimeError(f"Could not decode the image file: {e}")
-
-    # Training did convert("L") FIRST, collapsing any colour, then convert("RGB")
-    # to replicate that single channel. Going straight to RGB is not equivalent
-    # for the ~5% of files in this dataset stored as RGB.
-    tensor = transform(gray.convert("RGB")).unsqueeze(0)
-    return gray, tensor, mode, size
-
-
-# ==============================================================================
-# 3. MODEL -- must match the training wrapper byte for byte
-# ==============================================================================
-
-class PneumoniaEfficientNetB3(nn.Module):
-    """Keeping the attribute name `backbone` is what makes the checkpoint keys
-    line up. A bare torchvision efficientnet_b3 shares ZERO keys with this
-    checkpoint, and load_state_dict(..., strict=False) would turn that total
-    mismatch into a silent no-op -- leaving a randomly initialised network that
-    returns confident nonsense on every image.
-    """
-
-    def __init__(self, dropout_p=0.4):
-        super().__init__()
-        self.backbone = efficientnet_b3(weights=None)
-        in_features = self.backbone.classifier[1].in_features   # 1536
-        self.in_features = in_features
-        self.backbone.classifier = nn.Sequential(
-            nn.Dropout(p=dropout_p, inplace=True),
-            nn.Linear(in_features, 1),
+        scale = min(
+            self.size / width,
+            self.size / height
         )
 
-    def forward(self, x):
-        return self.backbone(x).squeeze(1)      # (B,) raw logits, NO sigmoid
-
-    @property
-    def gradcam_target_layer(self):
-        return self.backbone.features[-1]
-
-
-def extract_state_dict(ck):
-    if not isinstance(ck, dict):
-        return ck, "raw state_dict object"
-    for key in ("model_state_dict", "state_dict", "model"):
-        if key in ck and isinstance(ck[key], dict):
-            return ck[key], f'checkpoint["{key}"]'
-    if all(isinstance(v, torch.Tensor) for v in ck.values()):
-        return ck, "checkpoint is itself a state_dict"
-    raise RuntimeError("Could not locate weights inside the checkpoint.")
-
-
-def align_prefixes(sd, model):
-    """Reconcile key prefixes. Never silently accepts a mismatch -- the caller
-    verifies the load and aborts if it did not actually happen."""
-    model_keys = set(model.state_dict().keys())
-
-    if all(k.startswith("module.") for k in sd):
-        sd = {k[len("module."):]: v for k, v in sd.items()}
-        print('  stripped "module." prefix (DataParallel checkpoint)')
-
-    if set(sd) & model_keys:
-        return sd, "keys already aligned"
-    if all(("backbone." + k) in model_keys for k in list(sd)[:5]):
-        return {"backbone." + k: v for k, v in sd.items()}, 'added "backbone." prefix'
-    if all(k.startswith("backbone.") for k in sd):
-        return ({k[len("backbone."):]: v for k, v in sd.items()},
-                'stripped "backbone." prefix')
-    return sd, "no prefix transformation applied"
-
-
-def load_model(model_path, device):
-    if not os.path.isfile(model_path):
-        raise FileNotFoundError(
-            f"\nCheckpoint not found:\n  {model_path}\n"
-            "Edit MODEL_PATH at the top of this file, or pass --model <path>."
+        new_width = max(
+            1,
+            int(round(width * scale))
         )
 
-    print("\n" + "=" * 76)
-    print("CHECKPOINT INSPECTION")
-    print("=" * 76)
-    print("File :", model_path)
-    print("Size : {:.1f} MB".format(os.path.getsize(model_path) / 1024 ** 2))
-
-    ck = torch.load(model_path, map_location=device, weights_only=False)
-
-    if isinstance(ck, dict):
-        print("\nMetadata stored in the checkpoint:")
-        for k in sorted(k for k in ck if k != "model_state_dict"):
-            v = ck[k]
-            if isinstance(v, dict):
-                short = {kk: (round(vv, 4) if isinstance(vv, float) else vv)
-                         for kk, vv in list(v.items())[:9]}
-                print(f"  {k:<22}: {short}")
-            else:
-                print(f"  {k:<22}: {v}")
-
-    sd, where = extract_state_dict(ck)
-    print(f"\nWeights from            : {where}")
-    print(f"Tensors in state_dict   : {len(sd)}")
-
-    head_keys = [k for k in sd if "classifier" in k and k.endswith(".weight")]
-    if not head_keys:
-        raise RuntimeError("No classifier weights found in the checkpoint.")
-    head_key = head_keys[-1]
-    num_outputs, head_in = sd[head_key].shape
-    print(f"Classifier key          : {head_key}")
-    print(f"Classifier shape        : [{num_outputs}, {head_in}]")
-
-    if num_outputs != 1:
-        raise RuntimeError(
-            f"This checkpoint has {num_outputs} output neurons. train_pneumonia.py "
-            "produces a single logit with BCEWithLogitsLoss, so this file did not "
-            "come from that run. Do not interpret it with this script."
+        new_height = max(
+            1,
+            int(round(height * scale))
         )
 
-    dropout_p = ck.get("dropout_p", 0.4) if isinstance(ck, dict) else 0.4
-    model = PneumoniaEfficientNetB3(dropout_p=dropout_p)
-
-    sd, note = align_prefixes(sd, model)
-    print(f"Key alignment           : {note}")
-
-    res = model.load_state_dict(sd, strict=False)
-    missing, unexpected = list(res.missing_keys), list(res.unexpected_keys)
-    total = len(model.state_dict())
-    loaded = total - len(missing)
-
-    print("\n" + "-" * 76)
-    print("LOAD VERIFICATION")
-    print("-" * 76)
-    print(f"Missing keys    : {len(missing)}")
-    print(f"Unexpected keys : {len(unexpected)}")
-    for k in missing[:5]:
-        print("   missing    ->", k)
-    for k in unexpected[:5]:
-        print("   unexpected ->", k)
-    print(f"Loaded {loaded}/{total} tensors ({100 * loaded / total:.1f}%)")
-
-    if loaded == 0:
-        raise RuntimeError(
-            "NO weights were loaded. The model is randomly initialised and every "
-            "prediction from it would be meaningless. The checkpoint's key names "
-            "do not match this architecture."
+        resized = img.resize(
+            (
+                new_width,
+                new_height
+            ),
+            Image.Resampling.BILINEAR
         )
-    if missing:
-        raise RuntimeError(
-            f"{len(missing)} tensors did not load. Refusing to run inference on a "
-            "partially initialised model -- the output would look plausible while "
-            "being noise. First missing key: " + missing[0]
+
+        canvas = Image.new(
+            img.mode,
+            (
+                self.size,
+                self.size
+            ),
+            0
         )
-    print("All tensors loaded. Weights verified.")
 
-    model.to(device).eval()
+        left = (
+            self.size - new_width
+        ) // 2
 
-    # ---- configuration read from the checkpoint, not assumed -----------------
-    cfg, assumed = {}, []
+        top = (
+            self.size - new_height
+        ) // 2
 
-    def get(key, fallback, label=None):
-        if isinstance(ck, dict) and key in ck and ck[key] is not None:
-            return ck[key]
-        assumed.append(label or key)
-        return fallback
+        canvas.paste(
+            resized,
+            (
+                left,
+                top
+            )
+        )
 
-    cfg["image_size"] = get("image_size", FALLBACK_IMAGE_SIZE)
-    norm = ck.get("normalization") if isinstance(ck, dict) else None
-    if norm:
-        cfg["mean"], cfg["std"] = norm["mean"], norm["std"]
-    else:
-        cfg["mean"], cfg["std"] = FALLBACK_MEAN, FALLBACK_STD
-        assumed.append("normalization")
-    cfg["letterbox"] = get("letterbox", True)
-    cn = get("class_names", FALLBACK_CLASS_NAMES)
-    cfg["class_names"] = ({int(k): v for k, v in cn.items()}
-                          if isinstance(cn, dict) else FALLBACK_CLASS_NAMES)
-    cfg["grayscale_handling"] = get(
-        "grayscale_handling", "convert('L') then replicate to 3 channels")
-    cfg["loss"] = get("loss", "BCEWithLogitsLoss")
-    cfg["model_name"] = get("model_name", "efficientnet_b3")
-    cfg["stage"] = ck.get("stage") if isinstance(ck, dict) else None
-    cfg["epoch"] = ck.get("epoch") if isinstance(ck, dict) else None
-    cfg["val_metrics"] = ck.get("val_metrics") if isinstance(ck, dict) else None
-    cfg["test_metrics"] = ck.get("test_metrics") if isinstance(ck, dict) else None
-    cfg["num_outputs"] = num_outputs
-    cfg["head_in_features"] = head_in
-
-    # ---- threshold: use the trained one; never invent one --------------------
-    thr = ck.get("threshold") if isinstance(ck, dict) else None
-    if thr is None:
-        cfg["threshold"] = 0.5
-        cfg["threshold_source"] = ("NOT PRESENT in checkpoint -> falling back to "
-                                   "0.5 (sigmoid default)")
-        assumed.append("threshold")
-    else:
-        cfg["threshold"] = float(thr)
-        crit = ck.get("threshold_criterion", "unknown")
-        cfg["threshold_source"] = f"validation-selected during training (criterion: {crit})"
-    cfg["threshold_rationale"] = ck.get("threshold_rationale") if isinstance(ck, dict) else None
-
-    if assumed:
-        print("\n  [warn] the checkpoint did not store: " + ", ".join(assumed))
-        print("         Falling back to defaults for those. If training used "
-              "different values, predictions will be wrong in a way that does "
-              "not raise an error.")
-
-    return model, cfg, ck
+        return canvas
 
 
-def report_provenance(cfg):
-    print("\n" + "=" * 76)
-    print("TRAINING PROVENANCE OF THIS CHECKPOINT")
-    print("=" * 76)
-    print(f"Stage : {cfg.get('stage')}    Epoch : {cfg.get('epoch')}")
-    for name, key in (("Validation", "val_metrics"), ("Test", "test_metrics")):
-        m = cfg.get(key)
-        if m:
-            print(f"{name} metrics recorded at save time:")
-            for k in ("accuracy", "precision", "recall", "specificity",
-                      "f1", "roc_auc", "pr_auc"):
-                if k in m:
-                    print(f"   {k:<12}: {float(m[k]):.4f}")
-    if cfg.get("stage") == 1:
-        print("\n  >>> This is a STAGE 1 checkpoint: the backbone was FROZEN and only")
-        print("      the classification head was trained. The convolutional features")
-        print("      are still plain ImageNet features, never adapted to radiographs.")
-        print("      Stage 2 fine-tuning did not complete. Expect weak predictions --")
-        print("      that is the model, not this script.")
-    print(f"\nThreshold in use : {cfg['threshold']:.4f}")
-    print(f"Threshold source : {cfg['threshold_source']}")
-    if cfg.get("threshold_rationale"):
-        print(f"Rationale        : {cfg['threshold_rationale']}")
+# ================================================================
+# TRANSFORM
+# ================================================================
 
+def build_transform(
+    cfg
+):
 
-# ==============================================================================
-# 4. GRAD-CAM
-# ==============================================================================
-
-class GradCAM:
-    """Grad-CAM for a single-logit model. float32, device-agnostic, hook-safe."""
-
-    def __init__(self, model, target_layer=None):
-        self.model = model
-        self.layer = target_layer or model.gradcam_target_layer
-        self.acts = None
-        self.grads = None
-        self.handles = []
-
-    def __enter__(self):
-        self.handles.append(self.layer.register_forward_hook(
-            lambda m, i, o: setattr(self, "acts", o.detach())))
-        self.handles.append(self.layer.register_full_backward_hook(
-            lambda m, gi, go: setattr(self, "grads", go[0].detach())))
-        return self
-
-    def __exit__(self, *exc):
-        for h in self.handles:
-            h.remove()
-        self.handles = []
-        return False
-
-    def generate(self, x, device, signed=1.0, output_size=None):
-        """signed=+1 explains evidence FOR pneumonia, -1 explains evidence FOR
-        normal. Runs in float32 with autocast off: half-precision gradients
-        through the hook can underflow to zero and produce a blank map."""
-        self.model.eval()
-        x = x.to(device).float().requires_grad_(True)
-
-        with torch.enable_grad():
-            logit = self.model(x)
-            self.model.zero_grad(set_to_none=True)
-            (signed * logit).sum().backward()
-
-        if self.acts is None or self.grads is None:
-            raise RuntimeError("Grad-CAM hooks captured nothing -- wrong target layer?")
-
-        a, g = self.acts[0], self.grads[0]
-        alpha = g.mean(dim=(1, 2), keepdim=True)       # channel importance
-        cam = F.relu((alpha * a).sum(dim=0))           # keep supporting evidence only
-        cam = cam - cam.min()
-        cam = cam / cam.max() if cam.max() > 0 else torch.zeros_like(cam)
-
-        size = output_size or (x.shape[-2], x.shape[-1])
-        cam = F.interpolate(cam[None, None], size=size,
-                            mode="bilinear", align_corners=False)[0, 0]
-        return cam.detach().cpu().numpy(), float(logit.detach().item()), tuple(a.shape)
-
-
-# ==============================================================================
-# 5. SINGLE-IMAGE PREDICTION
-# ==============================================================================
-
-def predict(image_path, model, cfg, device, transform,
-            show=True, save_dir=None, verbose=True):
-    gray, x, orig_mode, orig_size = load_image(image_path, transform)
-    gray_np = np.asarray(gray, dtype=np.float32) / 255.0
-
-    model.eval()
-    with torch.no_grad():
-        logit = model(x.to(device)).float()
-        p_pneu = torch.sigmoid(logit).item()
-    p_norm = 1.0 - p_pneu
-
-    threshold = cfg["threshold"]
-    idx = int(p_pneu >= threshold)
-    pred = cfg["class_names"][idx]
-    conf = p_pneu if idx == 1 else p_norm
-
-    result = {
-        "image_path": os.path.abspath(str(image_path)),
-        "prediction": pred,
-        "predicted_class_index": idx,
-        "normal_probability": round(p_norm * 100, 2),
-        "pneumonia_probability": round(p_pneu * 100, 2),
-        "confidence": round(conf * 100, 2),
-        "logit": round(float(logit.item()), 6),
-        "threshold": round(threshold, 6),
-        "class_mapping": {str(k): v for k, v in cfg["class_names"].items()},
-        "model_name": cfg["model_name"],
-        "image_size": cfg["image_size"],
-        "original_size": [orig_size[0], orig_size[1]],
-        "disclaimer": ("Research/educational model output. Not a clinical "
-                       "diagnosis. Grad-CAM shows model-attributed importance, "
-                       "not lesion segmentation."),
+    cfg = {
+        **DEFAULT_CFG,
+        **(cfg or {})
     }
 
-    # ---- Grad-CAM at the ORIGINAL resolution ---------------------------------
-    signed = 1.0 if idx == 1 else -1.0
-    with GradCAM(model) as engine:
-        cam, _, feat_shape = engine.generate(x, device, signed,
-                                             output_size=gray_np.shape)
+    image_size = int(
+        cfg["image_size"]
+    )
 
-    if verbose:
-        print("\n" + "=" * 62)
-        print(f"Image      : {os.path.basename(str(image_path))} "
-              f"({orig_size[0]}x{orig_size[1]}, mode {orig_mode})")
-        print(f"Prediction : {pred}")
-        print(f"NORMAL     : {result['normal_probability']:.2f}%")
-        print(f"PNEUMONIA  : {result['pneumonia_probability']:.2f}%")
-        print(f"Confidence : {result['confidence']:.2f}%")
-        print("=" * 62)
-        print("\nDIAGNOSTICS")
-        print(f" 1. Raw logit                 : {logit.item():+.6f}")
-        print(f" 2. sigmoid(logit) = P(class1): {p_pneu:.6f}")
-        print(f"    1 - sigmoid    = P(class0): {p_norm:.6f}")
-        print(f" 3. Class mapping             : "
-              f"{{0: '{cfg['class_names'][0]}', 1: '{cfg['class_names'][1]}'}}")
-        print(f" 4. Threshold                 : {threshold:.6f}")
-        print(f"    source                    : {cfg['threshold_source']}")
-        print(f" 5. Input size                : {cfg['image_size']}x{cfg['image_size']} "
-              f"(letterbox={cfg['letterbox']})")
-        print(f" 6. Tensor shape              : {tuple(x.shape)} {x.dtype}")
-        print(f"    value range               : [{x.min():.4f}, {x.max():.4f}]")
-        print(f" 7. Normalisation mean/std    : {cfg['mean']} / {cfg['std']}")
-        print(f"    grayscale handling        : {cfg['grayscale_handling']}")
-        print(f" 8. Classifier output dim     : {cfg['num_outputs']} "
-              f"(in_features {cfg['head_in_features']}); loss {cfg['loss']} "
-              f"-> sigmoid")
-        print(f" 9. Grad-CAM target layer     : backbone.features[-1], "
-              f"feature map {feat_shape}")
-        print(f"    explaining                : {pred} (signed target {signed:+.0f})")
+    if cfg.get(
+        "letterbox",
+        True
+    ):
 
-        margin = abs(p_pneu - threshold)
-        if margin < 0.05:
-            print("\n  >>> The probability sits within 0.05 of the threshold. This is")
-            print("      an essentially undecided output; do not read the label as a")
-            print("      finding.")
+        resize = LetterboxResize(
+            image_size
+        )
 
-    # ---- two-panel figure ----------------------------------------------------
-    if show or save_dir:
-        fig, axes = plt.subplots(1, 2, figsize=(15, 7.5))
+    else:
 
-        axes[0].imshow(gray_np, cmap="gray", vmin=0, vmax=1)
-        axes[0].set_title("Original X-ray", fontsize=19, pad=12)
-        axes[0].axis("off")
-
-        axes[1].imshow(gray_np, cmap="gray", vmin=0, vmax=1)
-        heat = axes[1].imshow(cam, cmap=HEATMAP_CMAP, alpha=OVERLAY_ALPHA,
-                              vmin=0, vmax=1)
-        axes[1].set_title("Grad-CAM Overlay", fontsize=19, pad=12)
-        axes[1].axis("off")
-        cb = fig.colorbar(heat, ax=axes[1], fraction=0.046, pad=0.04)
-        cb.set_label("Model-attributed importance", fontsize=12)
-
-        colour = "#C1445A" if idx == 1 else "#2E7D4F"
-        fig.suptitle(f"Model Prediction: {pred}    |    Confidence: {conf * 100:.2f}%",
-                     fontsize=21, fontweight="bold", y=0.97, color=colour)
-        fig.text(0.5, 0.05,
-                 f"NORMAL: {result['normal_probability']:.2f}%   |   "
-                 f"PNEUMONIA: {result['pneumonia_probability']:.2f}%   |   "
-                 f"threshold {threshold:.4f}   |   logit {logit.item():+.4f}",
-                 ha="center", fontsize=13, family="monospace")
-        fig.text(0.5, 0.008,
-                 "Research visualisation. Model attention, not lesion "
-                 "segmentation, and not a clinical diagnosis.",
-                 ha="center", fontsize=9.5, style="italic", color="#555555")
-        plt.tight_layout(rect=[0, 0.07, 1, 0.93])
-
-        out_dir = Path(save_dir) if save_dir else (
-            Path(os.path.dirname(os.path.abspath(image_path))) / "gradcam_results")
-        out_dir.mkdir(parents=True, exist_ok=True)
-        stem = Path(image_path).stem
-        fig_path = out_dir / f"{stem}_gradcam.png"
-        plt.savefig(fig_path, dpi=200, bbox_inches="tight")
-        with open(out_dir / f"{stem}_prediction.json", "w") as f:
-            json.dump(result, f, indent=2)
-        result["saved_figure"] = str(fig_path)
-        result["saved_json"] = str(out_dir / f"{stem}_prediction.json")
-
-        if show:
-            plt.show()
-        plt.close(fig)
-
-        if verbose:
-            print(f"\nFigure saved   : {fig_path}")
-            print(f"Prediction JSON: {result['saved_json']}")
-
-    return result
-
-
-# ==============================================================================
-# 6. BATCH PREDICTION
-# ==============================================================================
-
-def predict_folder(folder, model, cfg, device, transform, output_csv=None):
-    import pandas as pd
-    from torch.utils.data import Dataset, DataLoader
-
-    folder = Path(folder)
-    paths = sorted(str(p) for p in folder.rglob("*")
-                   if p.is_file() and not p.name.startswith("._")
-                   and p.suffix.lower() in VALID_EXT
-                   and "__MACOSX" not in str(p))
-    if not paths:
-        print(f"No images found under {folder}")
-        return None
-
-    print(f"\nFound {len(paths):,} image(s) under {folder}")
-
-    class _DS(Dataset):
-        def __len__(self):
-            return len(paths)
-
-        def __getitem__(self, i):
-            try:
-                with Image.open(paths[i]) as im:
-                    img = im.convert("L").convert("RGB")
-            except Exception:
-                img = Image.new("RGB", (cfg["image_size"], cfg["image_size"]))
-            return transform(img), i
-
-    # num_workers=0 keeps this safe on Windows without a spawn guard around _DS.
-    loader = DataLoader(_DS(), batch_size=16, shuffle=False, num_workers=0,
-                        pin_memory=device.type == "cuda")
-
-    probs = np.zeros(len(paths), dtype=np.float32)
-    model.eval()
-    with torch.no_grad():
-        for n, (xb, idx) in enumerate(loader, 1):
-            xb = xb.to(device, non_blocking=device.type == "cuda")
-            probs[idx.numpy()] = torch.sigmoid(model(xb).float()).cpu().numpy()
-            print(f"\r  batch {n}/{len(loader)}", end="", flush=True)
-    print()
-
-    threshold = cfg["threshold"]
-    preds = (probs >= threshold).astype(int)
-    df = pd.DataFrame({
-        "image_path": paths,
-        "prediction": [cfg["class_names"][p] for p in preds],
-        "normal_probability": np.round((1 - probs) * 100, 2),
-        "pneumonia_probability": np.round(probs * 100, 2),
-        "confidence": np.round(np.where(preds == 1, probs, 1 - probs) * 100, 2),
-    })
-    out = Path(output_csv or (folder / "batch_predictions.csv"))
-    df.to_csv(out, index=False)
-
-    print(f"\nResults -> {out.resolve()}")
-    print(df.prediction.value_counts().to_string())
-    print(f"Mean P(pneumonia): {df.pneumonia_probability.mean():.2f}%")
-    return df
-
-
-# ==============================================================================
-# 7. FULL TEST-SET EVALUATION
-# ==============================================================================
-
-def evaluate_test_folder(test_root, model, cfg, device, transform):
-    """Point this at chest_xray/test (containing NORMAL/ and PNEUMONIA/) to get
-    a full metric report using the locked threshold."""
-    import pandas as pd
-    from sklearn.metrics import (accuracy_score, precision_score, recall_score,
-                                 f1_score, roc_auc_score, average_precision_score,
-                                 confusion_matrix, classification_report)
-
-    test_root = Path(test_root)
-    rows = []
-    for cls_dir, label in (("NORMAL", 0), ("PNEUMONIA", 1)):
-        d = test_root / cls_dir
-        if not d.is_dir():
-            raise FileNotFoundError(
-                f"Expected {d} to exist. Point --evaluate at the folder that "
-                "CONTAINS NORMAL/ and PNEUMONIA/."
+        resize = transforms.Resize(
+            (
+                image_size,
+                image_size
             )
-        for p in sorted(d.rglob("*")):
-            if (p.is_file() and not p.name.startswith("._")
-                    and p.suffix.lower() in VALID_EXT and "__MACOSX" not in str(p)):
-                rows.append({"image_path": str(p), "label": label})
+        )
 
-    df = pd.DataFrame(rows)
-    print(f"\nEvaluating {len(df):,} images "
-          f"({int((df.label == 0).sum()):,} NORMAL, "
-          f"{int((df.label == 1).sum()):,} PNEUMONIA)")
+    return transforms.Compose(
+        [
+            resize,
 
-    probs = []
-    model.eval()
-    with torch.no_grad():
-        for i, r in df.iterrows():
-            _, x, _, _ = load_image(r.image_path, transform)
-            probs.append(torch.sigmoid(model(x.to(device)).float()).item())
-            if (i + 1) % 50 == 0 or i + 1 == len(df):
-                print(f"\r  {i + 1}/{len(df)}", end="", flush=True)
+            transforms.ToTensor(),
+
+            transforms.Normalize(
+                mean=cfg["mean"],
+                std=cfg["std"]
+            )
+        ]
+    )
+
+
+# ================================================================
+# MODEL
+# ================================================================
+
+class PneumoniaEfficientNetB3(
+    nn.Module
+):
+
+    def __init__(
+        self,
+        dropout_p=0.4
+    ):
+
+        super().__init__()
+
+        self.backbone = (
+            models.efficientnet_b3(
+                weights=None
+            )
+        )
+
+        in_features = (
+            self.backbone
+            .classifier[1]
+            .in_features
+        )
+
+        self.backbone.classifier = (
+            nn.Sequential(
+                nn.Dropout(
+                    p=dropout_p
+                ),
+                nn.Linear(
+                    in_features,
+                    1
+                )
+            )
+        )
+
+    def forward(
+        self,
+        x
+    ):
+
+        return self.backbone(
+            x
+        ).reshape(-1)
+
+
+# ================================================================
+# STATE DICT EXTRACTION
+# ================================================================
+
+def _get_state_dict(
+    checkpoint
+):
+
+    if not isinstance(
+        checkpoint,
+        dict
+    ):
+
+        return checkpoint
+
+    if (
+        "model_state_dict"
+        in checkpoint
+    ):
+
+        return checkpoint[
+            "model_state_dict"
+        ]
+
+    if (
+        "state_dict"
+        in checkpoint
+    ):
+
+        return checkpoint[
+            "state_dict"
+        ]
+
+    if (
+        "model"
+        in checkpoint
+        and
+        isinstance(
+            checkpoint["model"],
+            dict
+        )
+    ):
+
+        return checkpoint[
+            "model"
+        ]
+
+    if all(
+        isinstance(
+            v,
+            torch.Tensor
+        )
+        for v in checkpoint.values()
+    ):
+
+        return checkpoint
+
+    raise RuntimeError(
+        "Could not find model state_dict "
+        "in checkpoint."
+    )
+
+
+# ================================================================
+# CLEAN STATE DICT
+# ================================================================
+
+def _clean_state_dict(
+    state_dict
+):
+
+    cleaned = {}
+
+    for key, value in state_dict.items():
+
+        if key.startswith(
+            "module."
+        ):
+
+            key = key[
+                len("module.") :
+            ]
+
+        # Most of your checkpoint keys are:
+        # backbone.features...
+        #
+        # Keep them exactly like that.
+
+        cleaned[key] = value
+
+    return cleaned
+
+
+# ================================================================
+# LOAD MODEL
+# ================================================================
+
+def load_model(
+    model_path,
+    device
+):
+    """
+    Called by pipeline.py.
+
+    Returns:
+        model
+        cfg
+        checkpoint
+    """
+
+    model_path = str(
+        model_path
+    )
+
+    if not os.path.isfile(
+        model_path
+    ):
+
+        raise FileNotFoundError(
+            f"\nPneumonia checkpoint not found:\n"
+            f"{model_path}"
+        )
+
     print()
-
-    y = df.label.values
-    p = np.array(probs)
-    t = cfg["threshold"]
-    yhat = (p >= t).astype(int)
-    tn, fp, fn, tp = confusion_matrix(y, yhat, labels=[0, 1]).ravel()
-
-    print("\n" + "=" * 76)
-    print(f"TEST EVALUATION | n = {len(y):,} | threshold {t:.4f} (from checkpoint)")
     print("=" * 76)
-    baseline = max(y.mean(), 1 - y.mean())
-    print(f"Accuracy             : {accuracy_score(y, yhat):.4f}   "
-          f"(majority baseline {baseline:.4f})")
-    print(f"Precision (PPV)      : {precision_score(y, yhat, zero_division=0):.4f}")
-    print(f"Recall / Sensitivity : {recall_score(y, yhat, zero_division=0):.4f}"
-          f"   <- the safety-critical one")
-    print(f"Specificity (TNR)    : {tn / max(tn + fp, 1):.4f}")
-    print(f"F1                   : {f1_score(y, yhat, zero_division=0):.4f}")
-    print(f"ROC-AUC              : {roc_auc_score(y, p):.4f}")
-    print(f"PR-AUC               : {average_precision_score(y, p):.4f}")
-    print(f"\nTP {tp:,}  TN {tn:,}  FP {fp:,}  FN {fn:,}")
-    print(f"Missed pneumonia (FN): {fn:,} of {tp + fn:,} "
-          f"({100 * fn / max(tp + fn, 1):.2f}%)")
-    print("\n" + classification_report(y, yhat,
-                                       target_names=["NORMAL", "PNEUMONIA"],
-                                       digits=4))
-    print("Accuracy alone is not a sufficient result here: a constant predictor")
-    print(f"scores {100 * baseline:.2f}% on this split.")
-
-    df["probability"] = p
-    df["prediction"] = [cfg["class_names"][v] for v in yhat]
-    out = test_root / "test_evaluation_predictions.csv"
-    df.to_csv(out, index=False)
-    print(f"\nPer-image predictions -> {out.resolve()}")
-    return df
-
-
-# ==============================================================================
-# 8. MAIN
-# ==============================================================================
-
-def main():
-    ap = argparse.ArgumentParser(description="Test the pneumonia EfficientNet-B3 model")
-    ap.add_argument("image", nargs="?", default=None, help="path to one X-ray")
-    ap.add_argument("--model", default=MODEL_PATH, help="path to the .pth checkpoint")
-    ap.add_argument("--folder", default=None, help="run batch inference on a folder")
-    ap.add_argument("--evaluate", default=None,
-                    help="path to chest_xray/test for a full metric report")
-    ap.add_argument("--no-show", action="store_true",
-                    help="save figures without opening a window")
-    ap.add_argument("--save-dir", default=None, help="where to write figures/JSON")
-    args = ap.parse_args()
-
-    if args.no_show:
-        matplotlib.use("Agg")
-
-    device = setup_device()
-    model, cfg, _ = load_model(args.model, device)
-    report_provenance(cfg)
-    transform = build_transform(cfg)
-
-    print("\nPreprocessing reproduced from the checkpoint:")
-    print(" ", transform)
-
-    if args.evaluate:
-        evaluate_test_folder(args.evaluate, model, cfg, device, transform)
-        return
-
-    if args.folder:
-        predict_folder(args.folder, model, cfg, device, transform)
-        return
-
-    image_path = args.image or IMAGE_PATH
-    if not image_path:
-        image_path = input("\nEnter the full path of the chest X-ray image: ").strip().strip('"')
-
-    predict(image_path, model, cfg, device, transform,
-            show=not args.no_show, save_dir=args.save_dir)
-
-    print("\n" + "=" * 76)
-    print("Research/educational output. Not a clinical diagnosis. This model was")
-    print("trained on paediatric (~1-5y) single-centre chest radiographs; it does")
-    print("not transfer to adults, other hospitals, or any other pathology.")
+    print("PNEUMONIA CHECKPOINT")
     print("=" * 76)
 
+    print(
+        "File:",
+        model_path
+    )
+
+    checkpoint = torch.load(
+        model_path,
+        map_location=device,
+        weights_only=False
+    )
+
+    # ------------------------------------------------------------
+    # Metadata
+    # ------------------------------------------------------------
+
+    cfg = dict(
+        DEFAULT_CFG
+    )
+
+    if isinstance(
+        checkpoint,
+        dict
+    ):
+
+        if "image_size" in checkpoint:
+
+            cfg[
+                "image_size"
+            ] = int(
+                checkpoint[
+                    "image_size"
+                ]
+            )
+
+        if "letterbox" in checkpoint:
+
+            cfg[
+                "letterbox"
+            ] = bool(
+                checkpoint[
+                    "letterbox"
+                ]
+            )
+
+        if "normalization" in checkpoint:
+
+            normalization = (
+                checkpoint[
+                    "normalization"
+                ]
+            )
+
+            cfg[
+                "mean"
+            ] = normalization.get(
+                "mean",
+                cfg["mean"]
+            )
+
+            cfg[
+                "std"
+            ] = normalization.get(
+                "std",
+                cfg["std"]
+            )
+
+        if "class_names" in checkpoint:
+
+            cfg[
+                "class_names"
+            ] = {
+                int(k): str(v)
+                for k, v
+                in checkpoint[
+                    "class_names"
+                ].items()
+            }
+
+        if "threshold" in checkpoint:
+
+            cfg[
+                "threshold"
+            ] = float(
+                checkpoint[
+                    "threshold"
+                ]
+            )
+
+        if "model_name" in checkpoint:
+
+            cfg[
+                "model_name"
+            ] = str(
+                checkpoint[
+                    "model_name"
+                ]
+            )
+
+        if "dropout_p" in checkpoint:
+
+            cfg[
+                "dropout_p"
+            ] = float(
+                checkpoint[
+                    "dropout_p"
+                ]
+            )
+
+    print(
+        "Classes   :",
+        cfg["class_names"]
+    )
+
+    print(
+        "Input     :",
+        cfg["image_size"]
+    )
+
+    print(
+        "Threshold :",
+        cfg["threshold"]
+    )
+
+    # ------------------------------------------------------------
+    # Build architecture
+    # ------------------------------------------------------------
+
+    model = PneumoniaEfficientNetB3(
+        dropout_p=cfg.get(
+            "dropout_p",
+            0.4
+        )
+    )
+
+    state_dict = _clean_state_dict(
+        _get_state_dict(
+            checkpoint
+        )
+    )
+
+    # ------------------------------------------------------------
+    # Key compatibility
+    # ------------------------------------------------------------
+
+    model_keys = set(
+        model.state_dict().keys()
+    )
+
+    # If checkpoint lacks backbone prefix,
+    # try adding it.
+    if not (
+        set(state_dict.keys())
+        &
+        model_keys
+    ):
+
+        if all(
+            (
+                "backbone." + key
+            ) in model_keys
+            for key in list(
+                state_dict.keys()
+            )[:10]
+        ):
+
+            state_dict = {
+                "backbone." + key: value
+                for key, value
+                in state_dict.items()
+            }
+
+    # ------------------------------------------------------------
+    # Load
+    # ------------------------------------------------------------
+
+    result = model.load_state_dict(
+        state_dict,
+        strict=False
+    )
+
+    if result.missing_keys:
+
+        print(
+            "\nMissing keys:"
+        )
+
+        for key in result.missing_keys[
+            :10
+        ]:
+
+            print(
+                " ",
+                key
+            )
+
+        raise RuntimeError(
+            "Pneumonia checkpoint could not "
+            "be loaded completely."
+        )
+
+    if result.unexpected_keys:
+
+        print(
+            "\nUnexpected keys:"
+        )
+
+        for key in result.unexpected_keys[
+            :10
+        ]:
+
+            print(
+                " ",
+                key
+            )
+
+    model = model.to(
+        device
+    )
+
+    model.eval()
+
+    print(
+        "\nModel loaded successfully."
+    )
+
+    return (
+        model,
+        cfg,
+        checkpoint
+    )
+
+
+# ================================================================
+# MULTI-LAYER LAYERCAM
+# ================================================================
+
+class GradCAM:
+    """
+    Pipeline-compatible GradCAM class.
+
+    Despite the class name, this implementation uses
+    multi-layer LayerCAM-style spatial weighting.
+
+    Selected EfficientNet-B3 layers:
+
+        features[-4]
+        features[-3]
+        features[-2]
+        features[-1]
+
+    The maps are resized and fused.
+
+    The target is the RAW signed logit.
+
+    For pneumonia:
+        signed = +1
+
+    For normal:
+        signed = -1
+    """
+
+    def __init__(
+        self,
+        model,
+        target_layer=None
+    ):
+
+        self.model = model
+
+        features = (
+            model
+            .backbone
+            .features
+        )
+
+        n = len(
+            features
+        )
+
+        # More layers = better spatial information.
+        self.layer_indices = [
+            max(0, n - 4),
+            max(0, n - 3),
+            max(0, n - 2),
+            max(0, n - 1)
+        ]
+
+        # Remove duplicates
+        self.layer_indices = list(
+            dict.fromkeys(
+                self.layer_indices
+            )
+        )
+
+        # If pipeline provides a target layer,
+        # include it too.
+        if target_layer is not None:
+
+            self.target_layer = (
+                target_layer
+            )
+
+        else:
+
+            self.target_layer = (
+                features[
+                    self.layer_indices[-1]
+                ]
+            )
+
+        self.layers = [
+            features[i]
+            for i in self.layer_indices
+        ]
+
+        self.activations = {}
+
+        self.gradients = {}
+
+        self.handles = []
+
+        self._register_hooks()
+
+    # ============================================================
+    # HOOKS
+    # ============================================================
+
+    def _register_hooks(
+        self
+    ):
+
+        for idx, layer in zip(
+            self.layer_indices,
+            self.layers
+        ):
+
+            self.handles.append(
+                layer.register_forward_hook(
+                    self._make_forward_hook(
+                        idx
+                    )
+                )
+            )
+
+            self.handles.append(
+                layer.register_full_backward_hook(
+                    self._make_backward_hook(
+                        idx
+                    )
+                )
+            )
+
+    def _make_forward_hook(
+        self,
+        idx
+    ):
+
+        def hook(
+            module,
+            inputs,
+            output
+        ):
+
+            self.activations[
+                idx
+            ] = output
+
+        return hook
+
+    def _make_backward_hook(
+        self,
+        idx
+    ):
+
+        def hook(
+            module,
+            grad_input,
+            grad_output
+        ):
+
+            if (
+                grad_output
+                and
+                grad_output[0]
+                is not None
+            ):
+
+                self.gradients[
+                    idx
+                ] = grad_output[0]
+
+        return hook
+
+    # ============================================================
+    # CONTEXT MANAGER
+    # ============================================================
+
+    def __enter__(
+        self
+    ):
+
+        return self
+
+    def __exit__(
+        self,
+        exc_type,
+        exc_value,
+        traceback
+    ):
+
+        self.remove_hooks()
+
+    # ============================================================
+    # REMOVE HOOKS
+    # ============================================================
+
+    def remove_hooks(
+        self
+    ):
+
+        for handle in self.handles:
+
+            try:
+
+                handle.remove()
+
+            except Exception:
+
+                pass
+
+        self.handles = []
+
+    # ============================================================
+    # LAYERCAM
+    # ============================================================
+
+    def generate(
+        self,
+        input_tensor,
+        device,
+        signed=1.0,
+        output_size=None
+    ):
+        """
+        Signature intentionally matches your pipeline.py.
+
+        Returns:
+
+            cam
+            raw_logit
+            feature_shapes
+        """
+
+        self.model.eval()
+
+        self.activations.clear()
+
+        self.gradients.clear()
+
+        # --------------------------------------------------------
+        # Fresh tensor requiring gradients
+        # --------------------------------------------------------
+
+        x = (
+            input_tensor
+            .to(device)
+            .float()
+            .detach()
+            .requires_grad_(True)
+        )
+
+        self.model.zero_grad(
+            set_to_none=True
+        )
+
+        # --------------------------------------------------------
+        # RAW LOGIT
+        # --------------------------------------------------------
+
+        with torch.enable_grad():
+
+            output = self.model(
+                x
+            )
+
+            raw_logit = (
+                output.reshape(-1)[0]
+            )
+
+            # IMPORTANT:
+            # Explain raw logit, NOT sigmoid probability.
+            target_score = (
+                signed *
+                raw_logit
+            )
+
+            target_score.backward()
+
+        # --------------------------------------------------------
+        # Output size
+        # --------------------------------------------------------
+
+        if output_size is None:
+
+            output_size = (
+                x.shape[-2],
+                x.shape[-1]
+            )
+
+        # --------------------------------------------------------
+        # Layer CAMs
+        # --------------------------------------------------------
+
+        cams = []
+
+        feature_shapes = []
+
+        for idx in self.layer_indices:
+
+            activation = (
+                self.activations.get(
+                    idx
+                )
+            )
+
+            gradient = (
+                self.gradients.get(
+                    idx
+                )
+            )
+
+            if (
+                activation is None
+                or
+                gradient is None
+            ):
+
+                continue
+
+            feature_shapes.append(
+                tuple(
+                    activation.shape
+                )
+            )
+
+            # Remove batch dimension
+            activation = activation[
+                0
+            ]
+
+            gradient = gradient[
+                0
+            ]
+
+            # ----------------------------------------------------
+            # LayerCAM:
+            #
+            # positive spatial gradients
+            # weighted element-wise with activations.
+            # ----------------------------------------------------
+
+            positive_gradient = F.relu(
+                gradient
+            )
+
+            cam = (
+                positive_gradient
+                *
+                activation
+            ).sum(
+                dim=0
+            )
+
+            cam = F.relu(
+                cam
+            )
+
+            # ----------------------------------------------------
+            # Normalize layer CAM
+            # ----------------------------------------------------
+
+            cam_min = cam.min()
+
+            cam_max = cam.max()
+
+            if (
+                cam_max -
+                cam_min
+                >
+                1e-8
+            ):
+
+                cam = (
+                    cam -
+                    cam_min
+                ) / (
+                    cam_max -
+                    cam_min
+                )
+
+            else:
+
+                cam = torch.zeros_like(
+                    cam
+                )
+
+            # ----------------------------------------------------
+            # Resize
+            # ----------------------------------------------------
+
+            cam = F.interpolate(
+                cam[
+                    None,
+                    None
+                ],
+                size=output_size,
+                mode="bilinear",
+                align_corners=False
+            )[0, 0]
+
+            cams.append(
+                cam
+            )
+
+        if not cams:
+
+            raise RuntimeError(
+                "No Grad-CAM feature maps "
+                "were captured."
+            )
+
+        # --------------------------------------------------------
+        # Fuse multiple layers
+        # --------------------------------------------------------
+
+        fused = torch.stack(
+            cams,
+            dim=0
+        ).mean(
+            dim=0
+        )
+
+        # --------------------------------------------------------
+        # Final normalization
+        # --------------------------------------------------------
+
+        fused = (
+            fused -
+            fused.min()
+        )
+
+        maximum = fused.max()
+
+        if maximum > 1e-8:
+
+            fused = (
+                fused /
+                maximum
+            )
+
+        else:
+
+            fused = torch.zeros_like(
+                fused
+            )
+
+        return (
+            fused.detach().cpu().numpy(),
+            float(
+                raw_logit.detach().cpu().item()
+            ),
+            feature_shapes
+        )
+
+
+# ================================================================
+# OPTIONAL DIRECT TEST
+# ================================================================
+
+def predict_image(
+    image_path,
+    model_path,
+    device=None
+):
+    """
+    Optional standalone helper.
+
+    Your main pipeline does NOT need to use this.
+    """
+
+    if device is None:
+
+        device = torch.device(
+            "cuda"
+            if torch.cuda.is_available()
+            else "cpu"
+        )
+
+    model, cfg, _ = load_model(
+        model_path,
+        device
+    )
+
+    transform = build_transform(
+        cfg
+    )
+
+    with Image.open(
+        image_path
+    ) as image:
+
+        gray = image.convert(
+            "L"
+        )
+
+    x = transform(
+        gray.convert(
+            "RGB"
+        )
+    ).unsqueeze(
+        0
+    ).to(
+        device
+    )
+
+    with torch.no_grad():
+
+        logit = (
+            model(x)
+            .reshape(-1)[0]
+        )
+
+        pneumonia_probability = (
+            torch.sigmoid(
+                logit
+            ).item()
+        )
+
+    normal_probability = (
+        1.0
+        -
+        pneumonia_probability
+    )
+
+    threshold = float(
+        cfg["threshold"]
+    )
+
+    if (
+        pneumonia_probability
+        >=
+        threshold
+    ):
+
+        predicted_index = 1
+
+    else:
+
+        predicted_index = 0
+
+    prediction = (
+        cfg[
+            "class_names"
+        ][
+            predicted_index
+        ]
+    )
+
+    confidence = (
+        pneumonia_probability
+        if predicted_index == 1
+        else
+        normal_probability
+    )
+
+    return {
+
+        "prediction":
+            prediction,
+
+        "predicted_index":
+            predicted_index,
+
+        "confidence":
+            confidence * 100,
+
+        "normal_probability":
+            normal_probability * 100,
+
+        "pneumonia_probability":
+            pneumonia_probability * 100
+    }
+
+
+# ================================================================
+# MAIN
+# ================================================================
+#
+# Do NOT use a hardcoded image path.
+#
+# The normal use is:
+#
+#     pipeline.py
+#         |
+#         +--> loads this module
+#         |
+#         +--> load_model(checkpoint, device)
+#         |
+#         +--> build_transform(cfg)
+#         |
+#         +--> GradCAM(...)
+#
+# ================================================================
 
 if __name__ == "__main__":
-    try:
-        main()
-    except FileNotFoundError as e:
-        print("\n[ERROR]", e)
-        sys.exit(1)
-    except RuntimeError as e:
-        print("\n[ERROR]", e)
-        sys.exit(2)
-    except KeyboardInterrupt:
-        print("\nInterrupted.")
-        sys.exit(130)
-    except Exception:
-        print("\n[UNEXPECTED ERROR]")
-        traceback.print_exc()
-        sys.exit(3)
+
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Dynamic Pneumonia EfficientNet-B3 "
+            "testing"
+        )
+    )
+
+    parser.add_argument(
+        "image",
+        nargs="?",
+        default=None
+    )
+
+    parser.add_argument(
+        "--model",
+        required=True
+    )
+
+    args = parser.parse_args()
+
+    image_path = (
+        args.image
+    )
+
+    if not image_path:
+
+        image_path = input(
+            "Enter X-ray image path: "
+        ).strip().strip('"')
+
+    result = predict_image(
+        image_path,
+        args.model
+    )
+
+    print()
+    print("=" * 70)
+    print("RESULT")
+    print("=" * 70)
+
+    print(
+        "Prediction :",
+        result["prediction"]
+    )
+
+    print(
+        "Confidence :",
+        f"{result['confidence']:.2f}%"
+    )
+
+    print(
+        "Normal     :",
+        f"{result['normal_probability']:.2f}%"
+    )
+
+    print(
+        "Pneumonia  :",
+        f"{result['pneumonia_probability']:.2f}%"
+    )
+
+    print("=" * 70)
