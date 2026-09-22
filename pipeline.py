@@ -1913,8 +1913,11 @@ def process_xray(
                 ]
         },
 
-        "model":
-            "EfficientNet-B3",
+        "model": (
+            f"Ensemble ({', '.join(prediction['models'].keys())})"
+            if prediction.get("models")
+            else ("EfficientNet-B3" if branch == "CHEST" else "MURA EfficientNet-B3")
+        ),
 
         "device":
             str(
@@ -1937,6 +1940,14 @@ def process_xray(
                 "regions and is not lesion segmentation."
             )
     }
+
+    if prediction.get("models"):
+        result["ensemble"] = {
+            "consensus_ratio": prediction.get("consensus_ratio"),
+            "votes": prediction.get("votes"),
+            "primary_cam_model": prediction.get("primary_cam_model"),
+            "models": prediction.get("models")
+        }
 
     save_result_json(
         result,

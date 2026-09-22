@@ -14,6 +14,7 @@
 # ================================================================
 
 import os
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -175,22 +176,25 @@ def build_transform(
 # MODEL
 # ================================================================
 
-class PneumoniaEfficientNetB3(
+class PneumoniaGenericModel(
     nn.Module
 ):
 
     def __init__(
         self,
+        arch="efficientnet_b3",
         dropout_p=0.4
     ):
 
         super().__init__()
 
-        self.backbone = (
-            models.efficientnet_b3(
-                weights=None
-            )
-        )
+        arch = str(arch).lower()
+        if "v2" in arch:
+            self.backbone = models.efficientnet_v2_s()
+        elif "b7" in arch:
+            self.backbone = models.efficientnet_b7()
+        else:
+            self.backbone = models.efficientnet_b3()
 
         in_features = (
             self.backbone
@@ -218,6 +222,10 @@ class PneumoniaEfficientNetB3(
         return self.backbone(
             x
         ).reshape(-1)
+
+
+# Backward compatibility alias
+PneumoniaEfficientNetB3 = PneumoniaGenericModel
 
 
 # ================================================================
@@ -456,6 +464,33 @@ def load_model(
                 ]
             )
 
+    model_name_hint = ""
+    if isinstance(checkpoint, dict):
+        model_name_hint = str(checkpoint.get("model_name", ""))
+    if not model_name_hint:
+        model_name_hint = (Path(model_path).name.lower() + " " + Path(model_path).parent.name.lower())
+    else:
+        model_name_hint = model_name_hint.lower()
+
+    if "v2" in model_name_hint:
+        arch_type = "efficientnet_v2_s"
+        default_size = 384
+    elif "b7" in model_name_hint:
+        arch_type = "efficientnet_b7"
+        default_size = 600
+    else:
+        arch_type = "efficientnet_b3"
+        default_size = 300
+
+    cfg["model_name"] = arch_type
+    if "image_size" not in cfg or cfg["image_size"] == DEFAULT_CFG["image_size"]:
+        cfg["image_size"] = default_size
+
+    print(
+        "Architecture:",
+        arch_type
+    )
+
     print(
         "Classes   :",
         cfg["class_names"]
@@ -475,7 +510,8 @@ def load_model(
     # Build architecture
     # ------------------------------------------------------------
 
-    model = PneumoniaEfficientNetB3(
+    model = PneumoniaGenericModel(
+        arch=arch_type,
         dropout_p=cfg.get(
             "dropout_p",
             0.4
@@ -1167,63 +1203,91 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(
-        description=(
-            "Dynamic Pneumonia EfficientNet-B3 "
-            "testing"
-        )
+        description="Pneumonia Testing (Runs Multi-Model Ensemble by default, or specific model with --model)"
     )
 
     parser.add_argument(
         "image",
         nargs="?",
-        default=None
+        default=None,
+        help="Path to chest X-ray image"
     )
 
     parser.add_argument(
         "--model",
-        required=True
+        default=None,
+        help="Path to specific model checkpoint (e.g. V2-S, B3, B7). If omitted, runs full ensemble."
+    )
+
+    parser.add_argument(
+        "--ensemble",
+        action="store_true",
+        help="Force multi-model ensemble execution."
     )
 
     args = parser.parse_args()
 
-    image_path = (
-        args.image
-    )
+    image_path = args.image
 
     if not image_path:
+        image_path = input("Enter X-ray image path: ").strip().strip('"')
 
-        image_path = input(
-            "Enter X-ray image path: "
-        ).strip().strip('"')
+    if args.model is None or args.ensemble:
+        try:
+            try:
+                from ensemble_pneumonia_pipeline import run_ensemble
+            except ImportError:
+                from Pneumonia_Detection.ensemble_pneumonia_pipeline import run_ensemble
+            run_ensemble(image_path)
+        except Exception as e:
+            default_b3 = (
+                Path(__file__).resolve().parent
+                / "pneumonia_checkpoints"
+                / "pneumonia_efficientnet_b3_best.pth"
+            )
+            if default_b3.exists():
+                print(f"[!] Ensemble mode failed ({e}), falling back to single model {default_b3.name}...")
+                result = predict_image(image_path, str(default_b3))
+                print()
+                print("=" * 70)
+                print("RESULT")
+                print("=" * 70)
+                print("Prediction :", result["prediction"])
+                print("Confidence :", f"{result['confidence']:.2f}%")
+                print("Normal     :", f"{result['normal_probability']:.2f}%")
+                print("Pneumonia  :", f"{result['pneumonia_probability']:.2f}%")
+                print("=" * 70)
+            else:
+                raise
+    else:
+        result = predict_image(
+            image_path,
+            args.model
+        )
 
-    result = predict_image(
-        image_path,
-        args.model
-    )
+        print()
+        print("=" * 70)
+        print("RESULT")
+        print("=" * 70)
 
-    print()
-    print("=" * 70)
-    print("RESULT")
-    print("=" * 70)
+        print(
+            "Prediction :",
+            result["prediction"]
+        )
 
-    print(
-        "Prediction :",
-        result["prediction"]
-    )
+        print(
+            "Confidence :",
+            f"{result['confidence']:.2f}%"
+        )
 
-    print(
-        "Confidence :",
-        f"{result['confidence']:.2f}%"
-    )
+        print(
+            "Normal     :",
+            f"{result['normal_probability']:.2f}%"
+        )
 
-    print(
-        "Normal     :",
-        f"{result['normal_probability']:.2f}%"
-    )
+        print(
+            "Pneumonia  :",
+            f"{result['pneumonia_probability']:.2f}%"
+        )
 
-    print(
-        "Pneumonia  :",
-        f"{result['pneumonia_probability']:.2f}%"
-    )
-
-    print("=" * 70)
+        print("=" * 70)

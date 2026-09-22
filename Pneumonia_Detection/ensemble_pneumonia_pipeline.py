@@ -111,9 +111,19 @@ class PneumoniaEnsemble:
         print("=" * 76)
         print(f"Device : {self.device}")
 
+        def _is_lfs_pointer(p):
+            try:
+                return p.stat().st_size < 1024
+            except Exception:
+                return False
+
         # Model 1: EfficientNet-V2-S (pneumonia_runs/v2_s)
         v2_path = self.base_dir / "pneumonia_runs" / "v2_s" / "best.pth"
-        if v2_path.exists():
+        if not v2_path.exists():
+            print(f" [MISSING] EfficientNet-V2-S checkpoint not found at: {v2_path}")
+        elif _is_lfs_pointer(v2_path):
+            print(f" [!] EfficientNet-V2-S is an unpulled Git LFS pointer ({v2_path.stat().st_size} bytes). Run: git lfs pull")
+        else:
             try:
                 ckpt = torch.load(v2_path, map_location=self.device, weights_only=False)
                 m = models.efficientnet_v2_s()
@@ -135,7 +145,11 @@ class PneumoniaEnsemble:
 
         # Model 2: EfficientNet-B3 (pneumonia_checkpoints)
         b3_path = self.base_dir / "pneumonia_checkpoints" / "pneumonia_efficientnet_b3_best.pth"
-        if b3_path.exists():
+        if not b3_path.exists():
+            print(f" [MISSING] EfficientNet-B3 checkpoint not found at: {b3_path}")
+        elif _is_lfs_pointer(b3_path):
+            print(f" [!] EfficientNet-B3 is an unpulled Git LFS pointer ({b3_path.stat().st_size} bytes). Run: git lfs pull")
+        else:
             try:
                 ckpt = torch.load(b3_path, map_location=self.device, weights_only=False)
                 m = models.efficientnet_b3()
@@ -158,7 +172,11 @@ class PneumoniaEnsemble:
 
         # Model 3: EfficientNet-B7 (pneumonia_runs/b7)
         b7_path = self.base_dir / "pneumonia_runs" / "b7" / "best.pth"
-        if b7_path.exists():
+        if not b7_path.exists():
+            print(f" [MISSING] EfficientNet-B7 checkpoint not found at: {b7_path}")
+        elif _is_lfs_pointer(b7_path):
+            print(f" [!] EfficientNet-B7 is an unpulled Git LFS pointer ({b7_path.stat().st_size} bytes). Run: git lfs pull")
+        else:
             try:
                 ckpt = torch.load(b7_path, map_location=self.device, weights_only=False)
                 m = models.efficientnet_b7()
@@ -178,6 +196,8 @@ class PneumoniaEnsemble:
             except Exception as e:
                 print(f" [!] Could not load EfficientNet-B7: {e}")
 
+        total_models = len(self.models_info)
+        print(f" [INFO] Active Ensemble: {total_models} of 3 models loaded ({', '.join(self.models_info.keys())})")
         if not self.models_info:
             raise RuntimeError("No valid pneumonia checkpoints found in pneumonia_runs or pneumonia_checkpoints!")
 
