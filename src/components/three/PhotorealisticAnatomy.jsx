@@ -21,6 +21,7 @@ export default function PhotorealisticAnatomy({
   const [startAngle, setStartAngle] = useState(0);
   const [renderMode, setRenderMode] = useState('video'); // 'video' | 'frames'
   const [scanBeamY, setScanBeamY] = useState(20);
+  const [mediaAspect, setMediaAspect] = useState(null);
 
   const totalFrames = frameNames.length; // 75 high-res frames
 
@@ -96,6 +97,14 @@ export default function PhotorealisticAnatomy({
       const fraction = videoRef.current.currentTime / videoRef.current.duration;
       const deg = Math.round(fraction * 360);
       setRotationAngle(deg);
+    }
+  };
+
+  const handleMediaLoad = (e) => {
+    const width = e.target.videoWidth || e.target.naturalWidth;
+    const height = e.target.videoHeight || e.target.naturalHeight;
+    if (width && height) {
+      setMediaAspect(width / height);
     }
   };
 
@@ -216,7 +225,13 @@ export default function PhotorealisticAnatomy({
       {/* Cyber Grid Texture */}
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#08334415_1px,transparent_1px),linear-gradient(to_bottom,#08334415_1px,transparent_1px)] bg-[size:28px_28px] pointer-events-none" />
 
-      {/* Sweeping Laser Scan Beam */}
+      {/* Black patch to cover Spline watermark - sits above video but below scan beam */}
+      <div
+        className="absolute z-[15] pointer-events-none"
+        style={{ bottom: '10%', right: '23%', width: '40px', height: '40px', backgroundColor: '#030712' }}
+      />
+
+      {/* Sweeping Laser Scan Beam - z-20 so it passes in front of the black patch */}
       <div
         className="absolute left-0 right-0 z-20 pointer-events-none transition-transform duration-75"
         style={{ top: `${scanBeamY}%` }}
