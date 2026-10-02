@@ -5,6 +5,35 @@ import { ArrowLeft, ArrowRight, Clock } from 'lucide-react';
 import XRayScene from '../components/three/XRayScene';
 import CTScene from '../components/three/CTScene';
 import MRIAnatomy from '../components/three/MRIAnatomy';
+import Brain3DViewer from '../components/three/Brain3DViewer';
+import Lung3DViewer from '../components/three/Lung3DViewer';
+import Skeleton3DViewer from '../components/three/Skeleton3DViewer';
+
+class CanvasErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error, info) {
+    console.warn('Canvas 3D rendering error caught:', error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center">
+          <div className="w-10 h-10 rounded-full border border-cyan-500/30 bg-cyan-950/30 flex items-center justify-center text-cyan-400 mb-2">
+            <span className="font-mono text-xs font-bold">3D</span>
+          </div>
+          <span className="text-[11px] font-mono text-cyan-400/80">3D Simulation Active</span>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export default function ScanSelection({ onSelectModality, onBack }) {
   const [hoveredCard, setHoveredCard] = useState(null);
@@ -18,7 +47,10 @@ export default function ScanSelection({ onSelectModality, onBack }) {
       desc: 'Pneumonia + Musculoskeletal Analysis',
       details: 'Dual-specialist pipeline: Automated routing to Chest (Pneumonia) or MURA (Musculoskeletal Abnormality).',
       badge: 'Dual Router',
-      render3D: (isHovered) => <XRayScene isHovered={isHovered} />,
+      isCustom: true,
+      renderCustom: (isHovered, isSelected) => (
+        <Skeleton3DViewer isHovered={isHovered} isSelected={isSelected} />
+      ),
       cameraPos: [0, 0, 4.2],
     },
     {
@@ -28,7 +60,10 @@ export default function ScanSelection({ onSelectModality, onBack }) {
       desc: 'Normal / Pneumonia / COVID-19',
       details: 'Evaluates individual 2D axial thoracic slices for ground-glass opacities, consolidations, or normal lung parenchyma.',
       badge: '2D Axial Slice',
-      render3D: (isHovered) => <CTScene isHovered={isHovered} />,
+      isCustom: true,
+      renderCustom: (isHovered, isSelected) => (
+        <Lung3DViewer isHovered={isHovered} isSelected={isSelected} />
+      ),
       cameraPos: [0, 0, 4.2],
     },
     {
@@ -38,7 +73,10 @@ export default function ScanSelection({ onSelectModality, onBack }) {
       desc: 'Brain Tumor Analysis',
       details: 'Binary classification of intracranial axial T1ce/FLAIR sequences: Tumor vs. No Tumor with Grad-CAM localization.',
       badge: 'Brain Pathology',
-      render3D: (isHovered) => <MRIAnatomy isHovered={isHovered} />,
+      isCustom: true,
+      renderCustom: (isHovered, isSelected) => (
+        <Brain3DViewer isHovered={isHovered} isSelected={isSelected} />
+      ),
       cameraPos: [0, 0, 4.2],
     },
   ];
@@ -121,27 +159,35 @@ export default function ScanSelection({ onSelectModality, onBack }) {
 
                 {/* 3D Canvas Stage */}
                 <div className="w-full h-52 sm:h-56 relative my-2 rounded-xl overflow-hidden bg-slate-950/80 border border-white/5 flex items-center justify-center group-hover:border-cyan-500/30 transition-colors">
-                  <Canvas
-                    camera={{ position: item.cameraPos, fov: 42 }}
-                    gl={{ antialias: true, alpha: true }}
-                    className="w-full h-full"
-                  >
-                    <ambientLight intensity={0.7} />
-                    <pointLight position={[4, 4, 4]} intensity={1.2} color="#00e5ff" />
-                    <pointLight position={[-4, -4, -4]} intensity={0.6} color="#3b82f6" />
-                    <Suspense fallback={null}>
-                      {item.render3D(isHovered || isSelected)}
-                    </Suspense>
-                  </Canvas>
+                  {item.isCustom ? (
+                    item.renderCustom(isHovered, isSelected)
+                  ) : (
+                    <CanvasErrorBoundary>
+                      <Canvas
+                        camera={{ position: item.cameraPos, fov: 42 }}
+                        gl={{ antialias: true, alpha: true }}
+                        className="w-full h-full"
+                      >
+                        <ambientLight intensity={0.7} />
+                        <pointLight position={[4, 4, 4]} intensity={1.2} color="#00e5ff" />
+                        <pointLight position={[-4, -4, -4]} intensity={0.6} color="#3b82f6" />
+                        <Suspense fallback={null}>
+                          {item.render3D(isHovered || isSelected)}
+                        </Suspense>
+                      </Canvas>
+                    </CanvasErrorBoundary>
+                  )}
 
                   {/* Hover visual cue */}
-                  <div
-                    className={`absolute bottom-2 right-2 text-[10px] font-mono px-2 py-0.5 rounded bg-black/70 border border-cyan-500/30 text-cyan-300 transition-opacity ${
-                      isHovered ? 'opacity-100' : 'opacity-0'
-                    }`}
-                  >
-                    Interactive 3D
-                  </div>
+                  {!item.isCustom && (
+                    <div
+                      className={`absolute bottom-2 right-2 text-[10px] font-mono px-2 py-0.5 rounded bg-black/70 border border-cyan-500/30 text-cyan-300 transition-opacity z-20 pointer-events-none ${
+                        isHovered ? 'opacity-100' : 'opacity-0'
+                      }`}
+                    >
+                      Interactive 3D
+                    </div>
+                  )}
                 </div>
 
                 {/* Content details */}
