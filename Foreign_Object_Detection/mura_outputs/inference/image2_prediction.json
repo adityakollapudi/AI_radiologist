@@ -1,0 +1,21 @@
+{
+  "image_path": "C:\\Users\\vemul\\.cache\\kagglehub\\datasets\\cjinny\\mura-v11\\versions\\1\\MURA-v1.1\\valid\\XR_HAND\\patient11319\\study1_positive\\image2.png",
+  "prediction": "Normal",
+  "predicted_class": 0,
+  "normal_probability": 55.13,
+  "abnormal_probability": 44.87,
+  "confidence": 55.13,
+  "raw_logit": -0.205986,
+  "threshold": 0.455,
+  "model_name": "efficientnet_b3",
+  "image_size": 300,
+  "original_dimensions": [
+    388,
+    512
+  ],
+  "timestamp": "2026-09-12 01:20:15",
+  "disclaimer": "Research/educational model output. Not a clinical diagnosis. Grad-CAM shows model-attributed importance, not lesion segmentation.",
+  "saved_original": "mura_outputs\\inference\\image2_original_xray.png",
+  "saved_gradcam": "mura_outputs\\inference\\image2_gradcam.png",
+  "saved_overlay": "mura_outputs\\inference\\image2_gradcam_overlay.png"
+}

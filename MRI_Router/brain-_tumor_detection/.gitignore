@@ -1,0 +1,25 @@
+# Python & Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE & Editor files
+.vscode/
+.idea/
+.ipynb_checkpoints/
+
+# Generated Artifacts & Visualizations
+logs/
+*.log
+gradcam_*.jpg
+gradcam_*.jpeg
+eval_*.jpg
+test_*.jpg
+
+# Operating System
+Thumbs.db
+.DS_Store

@@ -1,0 +1,6 @@
+image_path,prediction,normal_probability,abnormal_probability,confidence
+C:\Users\vemul\.cache\kagglehub\datasets\cjinny\mura-v11\versions\1\MURA-v1.1\valid\XR_ELBOW\patient11186\study1_positive\image1.png,Abnormal,0.02,99.98,99.98
+C:\Users\vemul\.cache\kagglehub\datasets\cjinny\mura-v11\versions\1\MURA-v1.1\valid\XR_ELBOW\patient11186\study1_positive\image2.png,Abnormal,2.93,97.07,97.07
+C:\Users\vemul\.cache\kagglehub\datasets\cjinny\mura-v11\versions\1\MURA-v1.1\valid\XR_ELBOW\patient11186\study1_positive\image3.png,Abnormal,1.83,98.17,98.17
+C:\Users\vemul\.cache\kagglehub\datasets\cjinny\mura-v11\versions\1\MURA-v1.1\valid\XR_ELBOW\patient11186\study1_positive\image4.png,Abnormal,7.48,92.52,92.52
+C:\Users\vemul\.cache\kagglehub\datasets\cjinny\mura-v11\versions\1\MURA-v1.1\valid\XR_ELBOW\patient11186\study1_positive\image5.png,Abnormal,0.69,99.31,99.31

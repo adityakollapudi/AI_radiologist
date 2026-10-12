@@ -1,0 +1,34 @@
+{
+  "model": "EfficientNet-B7",
+  "image_size": 600,
+  "batch_size": 4,
+  "gradient_accumulation": 4,
+  "threshold": 0.95,
+  "validation": {
+    "accuracy": 0.9741007194244604,
+    "precision": 0.9978401727861771,
+    "recall": 0.964509394572025,
+    "specificity": 0.9953703703703703,
+    "f1": 0.9808917197452229,
+    "roc_auc": 0.998758022113972,
+    "pr_auc": 0.9994411516037635,
+    "tn": 215,
+    "fp": 1,
+    "fn": 17,
+    "tp": 462
+  },
+  "test": {
+    "accuracy": 0.901294498381877,
+    "precision": 0.8687782805429864,
+    "recall": 0.9922480620155039,
+    "specificity": 0.7489177489177489,
+    "f1": 0.9264173703256936,
+    "roc_auc": 0.9644395225790574,
+    "pr_auc": 0.9741251481947875,
+    "tn": 173,
+    "fp": 58,
+    "fn": 3,
+    "tp": 384
+  },
+  "epochs_completed": 9
+}

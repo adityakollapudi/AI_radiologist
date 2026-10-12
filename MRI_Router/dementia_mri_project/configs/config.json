@@ -1,0 +1,101 @@
+{
+  "project_name": "Dementia MRI Detection and Severity Classification",
+  "task": "dementia_mri_classification",
+  "seed": 42,
+
+  "dataset_slug": "prasukjain07/preprocessed-alzheimers-disease-mri-dataset",
+  "dataset_version": "kaggle:prasukjain07/preprocessed-alzheimers-disease-mri-dataset (latest at download time)",
+  "data_root": null,
+  "output_root": null,
+  "external_data_root": null,
+
+  "class_order": ["Non Demented", "Very mild Dementia", "Mild Dementia", "Moderate Dementia"],
+  "num_classes": 4,
+
+  "image_size": 224,
+  "color_mode": "auto",
+  "brain_crop": "auto",
+  "pad_value": 0,
+
+  "model": "efficientnet_v2_s",
+  "baseline_model": "efficientnet_b0",
+  "pretrained": true,
+  "dropout": 0.3,
+  "dropout2": 0.2,
+  "hidden_dim": 256,
+
+  "batch_size": 32,
+  "eval_batch_size": 64,
+  "num_workers": 2,
+  "persistent_workers": true,
+
+  "epochs_stage1": 5,
+  "epochs_stage2": 40,
+  "head_lr": 0.001,
+  "finetune_head_lr": 0.0001,
+  "backbone_lr": 0.00001,
+  "weight_decay": 0.0001,
+  "unfreeze_fraction": 0.35,
+  "label_smoothing": 0.0,
+  "class_weight_imbalance_threshold": 1.5,
+  "early_stopping_patience": 7,
+  "scheduler": "plateau",
+  "scheduler_patience": 3,
+  "scheduler_factor": 0.5,
+  "min_lr": 1e-7,
+  "amp": true,
+  "grad_clip": 5.0,
+  "max_oom_retries": 3,
+
+  "augmentation": {
+    "enabled": true,
+    "rotation_deg": 8,
+    "translate": 0.04,
+    "scale": [0.95, 1.05],
+    "brightness": 0.10,
+    "contrast": 0.10,
+    "noise_std": 0.01,
+    "noise_p": 0.3,
+    "hflip_p": 0.0
+  },
+
+  "split": {"train": 0.70, "val": 0.15, "test": 0.15, "n_trials": 300},
+  "small_class_policy": "train_test",
+
+  "audit_workers": 4,
+  "dedup_exact": true,
+  "phash": {
+    "merge_threshold": 4,
+    "report_threshold": 10,
+    "pixel_corr_threshold": 0.90,
+    "max_component": 300,
+    "max_pairs_per_image": 5,
+    "max_report_pairs": 200000
+  },
+
+  "calibration": {"n_bins": 15},
+  "uncertainty": {
+    "mc_dropout_passes": 20,
+    "low_confidence": 0.80,
+    "low_entropy": 0.35,
+    "high_confidence": 0.60,
+    "high_entropy": 0.65
+  },
+  "gradcam": {
+    "examples_per_group": 4,
+    "sanity_samples": 16,
+    "occlusion_fraction": 0.20
+  },
+  "robustness": {
+    "brightness": 0.10,
+    "contrast": 0.10,
+    "noise_std": 0.03,
+    "rotation_deg": 5
+  },
+  "ablation": {
+    "enabled": true,
+    "epochs_stage1": null,
+    "epochs_stage2": null
+  },
+  "allow_test_reevaluation": false
+}

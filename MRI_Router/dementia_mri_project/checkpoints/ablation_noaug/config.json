@@ -1,0 +1,94 @@
+{
+  "run_name": "ablation_noaug",
+  "model": "efficientnet_v2_s",
+  "model_display": "EfficientNetV2-S",
+  "classes": [
+    "Non Demented",
+    "Very mild Dementia",
+    "Mild Dementia",
+    "Moderate Dementia"
+  ],
+  "num_classes": 4,
+  "input_size": [
+    224,
+    224
+  ],
+  "preprocessing": {
+    "image_size": 224,
+    "color_mode": "gray3",
+    "brain_crop": false,
+    "pad_value": 0,
+    "mean": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "std": [
+      0.229,
+      0.224,
+      0.225
+    ]
+  },
+  "augmentation": {
+    "enabled": false,
+    "rotation_deg": 8,
+    "translate": 0.04,
+    "scale": [
+      0.95,
+      1.05
+    ],
+    "brightness": 0.1,
+    "contrast": 0.1,
+    "noise_std": 0.01,
+    "noise_p": 0.3,
+    "hflip_p": 0.0
+  },
+  "batch_size": 32,
+  "eval_batch_size": 64,
+  "epochs_stage1": 5,
+  "epochs_stage2": 40,
+  "head_lr": 0.001,
+  "finetune_head_lr": 0.0001,
+  "backbone_lr": 1e-05,
+  "weight_decay": 0.0001,
+  "optimizer": "AdamW",
+  "scheduler": "plateau",
+  "scheduler_patience": 3,
+  "scheduler_factor": 0.5,
+  "min_lr": 1e-07,
+  "early_stopping_patience": 7,
+  "unfreeze_fraction": 0.35,
+  "label_smoothing": 0.0,
+  "class_weights": null,
+  "dropout": 0.3,
+  "dropout2": 0.2,
+  "hidden_dim": 256,
+  "pretrained": true,
+  "amp": true,
+  "amp_dtype": "torch.float16",
+  "seed": 42,
+  "dataset_version": "kaggle:prasukjain07/preprocessed-alzheimers-disease-mri-dataset (latest at download time)",
+  "selection_metric": "validation macro-F1",
+  "split_files_sha256": {
+    "train": "a08038e6496bd044",
+    "val": "d0a8fe20c12b4cc3",
+    "test": "922d2b9f5b0002e0"
+  },
+  "config_hash": "d59fd6c67770300f",
+  "env": {
+    "python": "3.13.15",
+    "platform": "Linux-6.18.48+-x86_64-with-glibc2.39",
+    "torch": "2.11.0+cu128",
+    "torchvision": "0.26.0+cu128",
+    "numpy": "2.1.3",
+    "cuda_available": true,
+    "cuda_version": "12.8",
+    "cudnn": 91900,
+    "gpu": "Tesla T4",
+    "gpu_memory_gb": 14.56,
+    "cpu_count": 4,
+    "kaggle": true,
+    "gpu_capability": "7.5",
+    "pandas": "2.3.3"
+  }
+}

@@ -1,0 +1,22 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Caches and logs
+.pytest_cache/
+*.log
+
+# Environments
+.venv/
+venv/
+env/
+ENV/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Intermediate training resume checkpoints (>100MB, not needed for inference)
+*last_checkpoint.pth

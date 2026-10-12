@@ -1,0 +1,11 @@
+{
+  "image_path": "C:\\Users\\vemul\\.cache\\kagglehub\\datasets\\paultimothymooney\\chest-xray-pneumonia\\versions\\2\\chest_xray\\chest_xray\\test\\NORMAL\\NORMAL2-IM-0366-0001.jpeg",
+  "prediction": "PNEUMONIA",
+  "normal_probability": 12.35,
+  "pneumonia_probability": 87.65,
+  "confidence": 87.65,
+  "logit": 1.959657,
+  "threshold": 0.75,
+  "model_name": "efficientnet_b3",
+  "disclaimer": "Research/educational model output. Not a clinical diagnosis. Grad-CAM shows model-attributed importance, not lesion segmentation."
+}
