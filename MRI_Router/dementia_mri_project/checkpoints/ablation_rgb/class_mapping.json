@@ -1,0 +1,39 @@
+{
+  "verified_from_folders": true,
+  "classes": [
+    {
+      "index": 0,
+      "name": "Non Demented",
+      "severity_index": 0,
+      "folder_names_found": [
+        "Non Demented"
+      ]
+    },
+    {
+      "index": 1,
+      "name": "Very mild Dementia",
+      "severity_index": 1,
+      "folder_names_found": [
+        "Very mild Dementia"
+      ]
+    },
+    {
+      "index": 2,
+      "name": "Mild Dementia",
+      "severity_index": 2,
+      "folder_names_found": [
+        "Mild Dementia"
+      ]
+    },
+    {
+      "index": 3,
+      "name": "Moderate Dementia",
+      "severity_index": 3,
+      "folder_names_found": [
+        "Moderate Dementia"
+      ]
+    }
+  ],
+  "missing_expected_classes": [],
+  "note": "Index order follows the analytical severity order; folder names are kept exactly as found."
+}

@@ -1,0 +1,35 @@
+{
+    "task": "dementia_mri_classification",
+    "prediction": "Non Demented",
+    "confidence": 0.3988615572452545,
+    "uncertainty": 0.8248810032243428,
+    "probabilities": {
+        "Non Demented": 0.3988615572452545,
+        "Very mild Dementia": 0.3883904218673706,
+        "Mild Dementia": 0.18605993688106537,
+        "Moderate Dementia": 0.026688147336244583
+    },
+    "model": "EfficientNetV2-S",
+    "input_size": [
+        224,
+        224
+    ],
+    "gradcam": "C:\\Users\\adity\\Downloads\\dementia_mri_project\\dementia_mri_project\\predictions\\images (1)\\images (1)_gradcam_overlay.png",
+    "uncertainty_measure": "normalized predictive entropy (0 = certain, 1 = uniform)",
+    "uncertainty_status": "HIGH uncertainty",
+    "top3": [
+        "Non Demented",
+        "Very mild Dementia",
+        "Mild Dementia"
+    ],
+    "temperature_calibrated": true,
+    "temperature": 2.876306700558039,
+    "inference_ms": 84.06305313110352,
+    "image_quality_ok": true,
+    "image_quality_warnings": [],
+    "image": "C:\\Users\\adity\\Downloads\\images (1).jpeg",
+    "disclaimer": "Research prototype. Predicts dataset-defined dementia categories from preprocessed JPG brain MRI slices. It is NOT a clinically validated diagnostic system; model confidence is not clinical certainty.",
+    "gradcam_panel": "C:\\Users\\adity\\Downloads\\dementia_mri_project\\dementia_mri_project\\predictions\\images (1)\\images (1)_gradcam_panel.png",
+    "gradcam_target_class": "Non Demented",
+    "gradcam_checks_passed": true
+}

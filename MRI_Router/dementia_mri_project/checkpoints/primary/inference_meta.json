@@ -1,0 +1,35 @@
+{
+  "temperature": 2.876306700558039,
+  "uncertainty_thresholds": {
+    "mc_dropout_passes": 20,
+    "low_confidence": 0.8,
+    "low_entropy": 0.35,
+    "high_confidence": 0.6,
+    "high_entropy": 0.65
+  },
+  "checkpoint_sha256": "ee20ce64ecb82a94476bd202604873c68572d3707c753fec034f04c4786d2157",
+  "class_names": [
+    "Non Demented",
+    "Very mild Dementia",
+    "Mild Dementia",
+    "Moderate Dementia"
+  ],
+  "preprocessing": {
+    "image_size": 224,
+    "color_mode": "gray3",
+    "brain_crop": false,
+    "pad_value": 0,
+    "mean": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "std": [
+      0.229,
+      0.224,
+      0.225
+    ]
+  },
+  "model": "EfficientNetV2-S",
+  "arch": "efficientnet_v2_s"
+}

@@ -1,0 +1,32 @@
+{
+    "task": "dementia_mri_classification",
+    "prediction": "Non Demented",
+    "confidence": 0.6286435127258301,
+    "uncertainty": 0.6576337312144058,
+    "probabilities": {
+        "Non Demented": 0.6286435127258301,
+        "Very mild Dementia": 0.2846241295337677,
+        "Mild Dementia": 0.022987740114331245,
+        "Moderate Dementia": 0.06374460458755493
+    },
+    "model": "EfficientNetV2-S",
+    "input_size": [
+        224,
+        224
+    ],
+    "gradcam": null,
+    "uncertainty_measure": "normalized predictive entropy (0 = certain, 1 = uniform)",
+    "uncertainty_status": "HIGH uncertainty",
+    "top3": [
+        "Non Demented",
+        "Very mild Dementia",
+        "Moderate Dementia"
+    ],
+    "temperature_calibrated": true,
+    "temperature": 2.876306700558039,
+    "inference_ms": 74.83386993408203,
+    "image_quality_ok": true,
+    "image_quality_warnings": [],
+    "image": "with out dementia.jpeg",
+    "disclaimer": "Research prototype. Predicts dataset-defined dementia categories from preprocessed JPG brain MRI slices. It is NOT a clinically validated diagnostic system; model confidence is not clinical certainty."
+}

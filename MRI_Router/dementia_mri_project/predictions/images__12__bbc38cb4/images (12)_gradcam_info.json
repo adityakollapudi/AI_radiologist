@@ -1,0 +1,99 @@
+{
+  "image": "C:\\Users\\adity\\Downloads\\images (12).jpeg",
+  "predicted_class": "Non Demented",
+  "probabilities": {
+    "Non Demented": 0.9702087044715881,
+    "Very mild Dementia": 0.029728693887591362,
+    "Mild Dementia": 6.0934413340874016e-05,
+    "Moderate Dementia": 1.6590738596278243e-06
+  },
+  "target_class": "Non Demented",
+  "true_class": null,
+  "layers": {
+    "early": {
+      "module": "features.3",
+      "spatial": [
+        28,
+        28
+      ],
+      "channels": 64,
+      "checks": {
+        "layer_exists": true,
+        "activation_exists": true,
+        "gradient_exists": true,
+        "activation_non_empty": true,
+        "gradient_non_empty": true,
+        "no_nan": true,
+        "not_all_zero": true,
+        "not_all_one": true,
+        "dimensions_match_input": true
+      }
+    },
+    "middle": {
+      "module": "features.5",
+      "spatial": [
+        14,
+        14
+      ],
+      "channels": 160,
+      "checks": {
+        "layer_exists": true,
+        "activation_exists": true,
+        "gradient_exists": true,
+        "activation_non_empty": true,
+        "gradient_non_empty": true,
+        "no_nan": true,
+        "not_all_zero": true,
+        "not_all_one": true,
+        "dimensions_match_input": true
+      }
+    },
+    "late": {
+      "module": "features.6",
+      "spatial": [
+        7,
+        7
+      ],
+      "channels": 256,
+      "checks": {
+        "layer_exists": true,
+        "activation_exists": true,
+        "gradient_exists": true,
+        "activation_non_empty": true,
+        "gradient_non_empty": true,
+        "no_nan": true,
+        "not_all_zero": true,
+        "not_all_one": true,
+        "dimensions_match_input": true
+      }
+    },
+    "final": {
+      "module": "features.7",
+      "spatial": [
+        7,
+        7
+      ],
+      "channels": 1280,
+      "checks": {
+        "layer_exists": true,
+        "activation_exists": true,
+        "gradient_exists": true,
+        "activation_non_empty": true,
+        "gradient_non_empty": true,
+        "no_nan": true,
+        "not_all_zero": true,
+        "not_all_one": true,
+        "dimensions_match_input": true
+      }
+    }
+  },
+  "fusion_method": "mean of independently min-max-normalised, ReLU-ed, bilinearly upsampled Grad-CAM maps (early, middle, late, final), renormalised to [0,1]",
+  "checks": {
+    "target_class_used": true,
+    "model_output_consistent": true,
+    "all_layer_checks_passed": true,
+    "empty_maps": [],
+    "saturated_maps": []
+  },
+  "note": "Grad-CAM is an attribution map, not a lesion segmentation or diagnosis."
+}

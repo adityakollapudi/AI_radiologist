@@ -1,0 +1,266 @@
+{
+  "validation_at_0.5": {
+    "accuracy": 1.0,
+    "balanced_accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "sensitivity": 1.0,
+    "specificity": 1.0,
+    "f1": 1.0,
+    "macro_f1": 1.0,
+    "roc_auc": 1.0,
+    "pr_auc": 1.0,
+    "tn": 2483,
+    "fp": 0,
+    "fn": 0,
+    "tp": 2483,
+    "threshold": 0.5,
+    "n": 4966
+  },
+  "validation_at_threshold": {
+    "accuracy": 1.0,
+    "balanced_accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "sensitivity": 1.0,
+    "specificity": 1.0,
+    "f1": 1.0,
+    "macro_f1": 1.0,
+    "roc_auc": 1.0,
+    "pr_auc": 1.0,
+    "tn": 2483,
+    "fp": 0,
+    "fn": 0,
+    "tp": 2483,
+    "threshold": 0.5,
+    "n": 4966
+  },
+  "test_at_threshold": {
+    "accuracy": 1.0,
+    "balanced_accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "sensitivity": 1.0,
+    "specificity": 1.0,
+    "f1": 1.0,
+    "macro_f1": 1.0,
+    "roc_auc": 1.0,
+    "pr_auc": 1.0,
+    "tn": 2425,
+    "fp": 0,
+    "fn": 0,
+    "tp": 2425,
+    "threshold": 0.5,
+    "n": 4850
+  },
+  "test_at_0.5": {
+    "accuracy": 1.0,
+    "balanced_accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "sensitivity": 1.0,
+    "specificity": 1.0,
+    "f1": 1.0,
+    "macro_f1": 1.0,
+    "roc_auc": 1.0,
+    "pr_auc": 1.0,
+    "tn": 2425,
+    "fp": 0,
+    "fn": 0,
+    "tp": 2425,
+    "threshold": 0.5,
+    "n": 4850
+  },
+  "test_uncertain": {
+    "uncertain_count": 3,
+    "coverage": 0.999381443298969,
+    "routed_accuracy": 1.0,
+    "errors_routed": 0,
+    "errors_caught_as_uncertain": 0
+  },
+  "gradcam_focus": {
+    "in_body": {
+      "BRAIN_CT": 0.403,
+      "CHEST_CT": 0.796
+    },
+    "border": {
+      "BRAIN_CT": 0.128,
+      "CHEST_CT": 0.072
+    }
+  },
+  "shortcut_checks": {
+    "image_statistics_val_auc": 0.9999777777777779,
+    "brain_accuracy_brain_window": 1.0,
+    "brain_accuracy_lung_window_swap": 1.0,
+    "brain_accuracy_without_head_crop": 1.0,
+    "chest_accuracy_official_bbox": 1.0,
+    "chest_accuracy_without_bbox": 0.996
+  },
+  "leakage": {
+    "group_id: train & val": 0,
+    "group_id: train & test": 0,
+    "group_id: val & test": 0,
+    "study_id: train & val": 0,
+    "study_id: train & test": 0,
+    "study_id: val & test": 0,
+    "filepath: train & val": 0,
+    "filepath: train & test": 0,
+    "filepath: val & test": 0,
+    "COVIDx patients: train & val": 0,
+    "COVIDx patients: train & test": 0,
+    "COVIDx patients: val & test": 0,
+    "CQ500 patients: train & val": 0,
+    "CQ500 patients: train & test": 0,
+    "CQ500 patients: val & test": 0,
+    "duplicate file paths": 0
+  },
+  "best_epoch": 3,
+  "best_val_roc_auc": 1.0,
+  "split_summary": [
+    {
+      "dataset": "COVIDx (chest)",
+      "split": "train",
+      "patients/groups": 4232,
+      "studies": 4248,
+      "slices": 357516
+    },
+    {
+      "dataset": "COVIDx (chest)",
+      "split": "val",
+      "patients/groups": 560,
+      "studies": 560,
+      "slices": 33725
+    },
+    {
+      "dataset": "COVIDx (chest)",
+      "split": "test",
+      "patients/groups": 503,
+      "studies": 503,
+      "slices": 33781
+    },
+    {
+      "dataset": "CQ500 (brain)",
+      "split": "train",
+      "patients/groups": 330,
+      "studies": 330,
+      "slices": 16061
+    },
+    {
+      "dataset": "CQ500 (brain)",
+      "split": "val",
+      "patients/groups": 71,
+      "studies": 71,
+      "slices": 3469
+    },
+    {
+      "dataset": "CQ500 (brain)",
+      "split": "test",
+      "patients/groups": 71,
+      "studies": 71,
+      "slices": 3203
+    }
+  ],
+  "sample_counts": {
+    "train": {
+      "CHEST_CT": 11722,
+      "BRAIN_CT": 11722
+    },
+    "val": {
+      "CHEST_CT": 2483,
+      "BRAIN_CT": 2483
+    },
+    "test": {
+      "CHEST_CT": 2425,
+      "BRAIN_CT": 2425
+    }
+  },
+  "config": {
+    "SEED": 42,
+    "COVIDX_SLUG": "hgunraj/covidxct",
+    "CQ500_SLUG": "crawford/qureai-headct",
+    "COVIDX_ROOT": null,
+    "CQ500_ROOT": null,
+    "COVIDX_VERSION": "3A",
+    "OUTPUT_DIR": "/kaggle/working/ct_anatomy_router",
+    "MAX_CHEST_TRAIN": 24000,
+    "MAX_BRAIN_TRAIN": 24000,
+    "MAX_CHEST_VAL": 6000,
+    "MAX_BRAIN_VAL": 6000,
+    "MAX_CHEST_TEST": 6000,
+    "MAX_BRAIN_TEST": 6000,
+    "MAX_BRAIN_SLICES_PER_STUDY": 50,
+    "MAX_CHEST_SLICES_PER_PATIENT": 50,
+    "BALANCE_CLASSES": true,
+    "SPLIT_FRACS": [
+      0.7,
+      0.15,
+      0.15
+    ],
+    "COVIDX_USE_OFFICIAL_SPLIT": true,
+    "IMAGE_SIZE": 256,
+    "CHEST_USE_BBOX": true,
+    "BRAIN_WINDOW_CENTER": 40,
+    "BRAIN_WINDOW_WIDTH": 80,
+    "BRAIN_HEAD_CROP": true,
+    "CROP_MARGIN": 0.04,
+    "BRAIN_ALT_WINDOW_P": 0.25,
+    "BRAIN_ALT_WINDOWS": [
+      [
+        40,
+        400
+      ],
+      [
+        75,
+        215
+      ],
+      [
+        -600,
+        1500
+      ],
+      [
+        600,
+        2800
+      ]
+    ],
+    "ROT_DEG": 10,
+    "TRANSLATE": 0.05,
+    "SCALE": [
+      0.92,
+      1.08
+    ],
+    "HFLIP_P": 0.5,
+    "BRIGHTNESS": 0.1,
+    "CONTRAST": 0.1,
+    "BATCH_SIZE": 16,
+    "EVAL_BATCH_SIZE": 32,
+    "NUM_WORKERS": 2,
+    "PIN_MEMORY": true,
+    "PERSISTENT_WORKERS": false,
+    "PREFETCH_FACTOR": 2,
+    "MIN_FREE_RAM_GB_FOR_WORKERS": 3.0,
+    "PRETRAINED": true,
+    "DROPOUT1": 0.3,
+    "HIDDEN": 256,
+    "DROPOUT2": 0.2,
+    "STAGE1_EPOCHS": 2,
+    "STAGE2_EPOCHS": 8,
+    "HEAD_LR": 0.001,
+    "FT_LR": 0.0001,
+    "WEIGHT_DECAY": 0.0001,
+    "UNFREEZE_FROM": 6,
+    "SCHEDULER": "cosine",
+    "WARMUP_FRAC": 0.05,
+    "EARLY_STOP_PATIENCE": 3,
+    "AMP": true,
+    "GRAD_CLIP": 5.0,
+    "MAX_OOM_RETRIES": 3,
+    "THRESHOLD_STRATEGY": "youden",
+    "ROUTED_ACC_TARGET": 0.995,
+    "MAX_UNCERTAIN_RATE": 0.01,
+    "INDEX_THREADS": 8,
+    "FULL_CQ500_INDEX": false,
+    "GRADCAM_PER_GROUP": 6,
+    "N_ERROR_SHOW": 20,
+    "SHORTCUT_SAMPLE": 600
+  }
+}

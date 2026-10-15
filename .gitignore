@@ -4,3 +4,25 @@ __pycache__/
 .pytest_cache/
 pipeline_outputs/
 
+# Environment and secrets
+.env
+*.env.local
+
+# Node / Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.output/
+dist/
+
+# Backend temporary files and caches
+backend/temp/
+temp/
+*.log
+
+# IDE and OS
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+.DS_Store
